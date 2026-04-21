@@ -2,12 +2,17 @@
 
 import { useState, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
-import { ChevronLeft, Copy, CheckCheck, Loader2, Sparkles } from "lucide-react";
+import { ChevronLeft, Copy, CheckCheck, Loader2, Sparkles, BookOpen, ArrowRight } from "lucide-react";
 import type { JobPosting, Profile } from "@/app/generate/page";
+import { saveCoverLetter } from "@/lib/api";
+import { createClient } from "@/lib/supabase/client";
+import Link from "next/link";
 
 interface Props {
   jobPosting: JobPosting;
   profile: Profile;
+  prevCoverLetter: string | null;
+  refLetterIds: number[];
   onBack: () => void;
 }
 
@@ -17,12 +22,13 @@ interface QuestionResult {
   done: boolean;
 }
 
-export default function StepResult({ jobPosting, profile, onBack }: Props) {
+export default function StepResult({ jobPosting, profile, prevCoverLetter, refLetterIds, onBack }: Props) {
   const [results, setResults] = useState<QuestionResult[]>([]);
   const [generating, setGenerating] = useState(false);
   const [done, setDone] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
+  const [saved, setSaved] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -41,10 +47,22 @@ export default function StepResult({ jobPosting, profile, onBack }: Props) {
     setResults([]);
 
     try {
+      const supabase = createClient();
+      const { data } = await supabase.auth.getSession();
+      const token = data.session?.access_token ?? "";
+
       const res = await fetch("http://localhost:8000/api/cover-letter/generate", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ job_posting: jobPosting, profile }),
+        headers: {
+          "Content-Type": "application/json",
+          ...(token && { Authorization: `Bearer ${token}` }),
+        },
+        body: JSON.stringify({
+          job_posting: jobPosting,
+          profile,
+          prev_cover_letter: prevCoverLetter,
+          reference_letter_ids: refLetterIds.length > 0 ? refLetterIds : null,
+        }),
       });
 
       if (!res.ok) throw new Error("자소서 생성에 실패했습니다.");
@@ -92,6 +110,16 @@ export default function StepResult({ jobPosting, profile, onBack }: Props) {
           }
         }
       }
+
+      // 생성 완료 후 자동 저장
+      setResults((finalResults) => {
+        saveCoverLetter({
+          job_posting: jobPosting,
+          content_json: finalResults.map((r) => ({ question: r.question, answer: r.answer })),
+        }).then((saved) => { if (saved) setSaved(true); });
+        return finalResults;
+      });
+
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "오류가 발생했습니다.");
     } finally {
@@ -127,17 +155,28 @@ export default function StepResult({ jobPosting, profile, onBack }: Props) {
           </p>
         </div>
         {done && (
-          <button
-            onClick={copyAll}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs transition-all"
-            style={{
-              border: "1px solid var(--border-light)",
-              color: copiedIndex === -1 ? "var(--success)" : "var(--text-muted)",
-            }}
-          >
-            {copiedIndex === -1 ? <CheckCheck size={13} /> : <Copy size={13} />}
-            전체 복사
-          </button>
+          <div className="flex items-center gap-2">
+            {saved && (
+              <Link
+                href="/history"
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs transition-all"
+                style={{ border: "1px solid var(--border-light)", color: "var(--text-muted)" }}
+              >
+                <BookOpen size={13} /> 히스토리
+              </Link>
+            )}
+            <button
+              onClick={copyAll}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs transition-all"
+              style={{
+                border: "1px solid var(--border-light)",
+                color: copiedIndex === -1 ? "var(--success)" : "var(--text-muted)",
+              }}
+            >
+              {copiedIndex === -1 ? <CheckCheck size={13} /> : <Copy size={13} />}
+              전체 복사
+            </button>
+          </div>
         )}
       </div>
 
@@ -149,7 +188,7 @@ export default function StepResult({ jobPosting, profile, onBack }: Props) {
         >
           <div
             className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
-            style={{ background: "rgba(201,169,110,0.12)", color: "var(--accent)" }}
+            style={{ background: "color-mix(in srgb, var(--accent) 12%, transparent)", color: "var(--accent)" }}
           >
             <Sparkles size={18} className="animate-pulse" />
           </div>
@@ -245,23 +284,42 @@ export default function StepResult({ jobPosting, profile, onBack }: Props) {
 
       {/* Actions */}
       {(done || error) && (
-        <div className="flex gap-3 pt-2">
-          <button
-            onClick={onBack}
-            className="flex items-center gap-1 px-4 py-3 rounded-xl text-sm transition-colors"
-            style={{ border: "1px solid var(--border)", color: "var(--text-muted)" }}
-          >
-            <ChevronLeft size={15} /> 이전
-          </button>
-          {error && (
-            <button
-              onClick={generate}
-              className="flex-1 py-3 rounded-xl text-sm font-medium transition-all hover:opacity-90"
-              style={{ background: "var(--accent)", color: "var(--bg)" }}
-            >
-              다시 생성
-            </button>
+        <div className="space-y-3 pt-2">
+          {done && saved && (
+            <div className="flex items-center justify-between p-4 rounded-2xl"
+              style={{ background: "color-mix(in srgb, var(--accent) 6%, var(--bg-card))", border: "1px solid color-mix(in srgb, var(--accent) 20%, var(--border))" }}>
+              <div>
+                <p className="text-sm font-medium" style={{ color: "var(--text)" }}>자소서가 저장되었습니다</p>
+                <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>생성 기록에서 언제든지 확인할 수 있습니다</p>
+              </div>
+              <Link href="/history"
+                className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium transition-all hover:opacity-90"
+                style={{ background: "var(--accent)", color: "var(--bg)" }}>
+                기록 보기 <ArrowRight size={14} />
+              </Link>
+            </div>
           )}
+          <div className="flex gap-3">
+            <button onClick={onBack}
+              className="flex items-center gap-1 px-4 py-3 rounded-xl text-sm transition-colors"
+              style={{ border: "1px solid var(--border)", color: "var(--text-muted)" }}>
+              <ChevronLeft size={15} /> 이전
+            </button>
+            {error && (
+              <button onClick={generate}
+                className="flex-1 py-3 rounded-xl text-sm font-medium transition-all hover:opacity-90"
+                style={{ background: "var(--accent)", color: "var(--bg)" }}>
+                다시 생성
+              </button>
+            )}
+            {done && (
+              <Link href="/generate"
+                className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-medium transition-all hover:opacity-90"
+                style={{ border: "1px solid var(--border)", color: "var(--text-muted)" }}>
+                새 자소서 생성
+              </Link>
+            )}
+          </div>
         </div>
       )}
     </div>

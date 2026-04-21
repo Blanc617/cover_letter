@@ -66,31 +66,36 @@ def pdf_to_images(pdf_bytes: bytes, dpi: int = 150) -> list[bytes]:
     return images
 
 
-# ── 5. Gemini Vision fallback ─────────────────────────────────────────────
+# ── 5. Claude Vision fallback ─────────────────────────────────────────────
 
-def extract_text_openai_vision(pdf_bytes: bytes) -> str:
-    """이미지 기반 PDF → OpenAI Vision으로 텍스트 추출"""
+def extract_text_claude_vision(pdf_bytes: bytes) -> str:
+    """이미지 기반 PDF → Claude Vision으로 텍스트 추출"""
     import base64
-    from openai import OpenAI
+    import anthropic
 
-    api_key = os.getenv("OPENAI_API_KEY")
+    api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
-        raise ValueError("OPENAI_API_KEY 환경변수가 설정되지 않았습니다.")
+        raise ValueError("ANTHROPIC_API_KEY 환경변수가 설정되지 않았습니다.")
 
-    client = OpenAI(api_key=api_key)
+    client = anthropic.Anthropic(api_key=api_key)
     images = pdf_to_images(pdf_bytes)
     all_text = []
 
     for img_bytes in images:
         b64 = base64.b64encode(img_bytes).decode("utf-8")
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
+        response = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=2000,
             messages=[{
                 "role": "user",
                 "content": [
                     {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/png;base64,{b64}"}
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/png",
+                            "data": b64
+                        }
                     },
                     {
                         "type": "text",
@@ -101,10 +106,9 @@ def extract_text_openai_vision(pdf_bytes: bytes) -> str:
                         )
                     }
                 ]
-            }],
-            max_tokens=2000
+            }]
         )
-        all_text.append(response.choices[0].message.content)
+        all_text.append(response.content[0].text)
 
     return "\n\n".join(all_text)
 
@@ -147,9 +151,9 @@ def parse_pdf(pdf_bytes: bytes) -> dict:
             "success": True
         }
 
-    # 3차: OpenAI Vision fallback
+    # 3차: Claude Vision fallback
     try:
-        text = extract_text_openai_vision(pdf_bytes)
+        text = extract_text_claude_vision(pdf_bytes)
         return {
             "text": text,
             "method": "gemini_vision",

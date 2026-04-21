@@ -6,11 +6,11 @@ POST /api/job-posting/analyze
 import base64
 import json
 from fastapi import APIRouter, UploadFile, File, HTTPException
-from openai import OpenAI
+import anthropic
 from app.config import settings
 
 router = APIRouter()
-client = OpenAI(api_key=settings.OPENAI_API_KEY)
+claude = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
 
 
 @router.post("/analyze")
@@ -38,24 +38,30 @@ async def analyze_job_posting(file: UploadFile = File(...)):
   "questions": ["자소서 문항1", "자소서 문항2"]
 }"""
 
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
+    response = claude.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=2000,
         messages=[{
             "role": "user",
             "content": [
-                {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{b64}"}},
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": mime_type,
+                        "data": b64
+                    }
+                },
                 {"type": "text", "text": prompt}
             ]
-        }],
-        max_tokens=2000
+        }]
     )
 
-    text = response.choices[0].message.content.strip()
-    if text.startswith("```"):
-        text = text.split("```")[1]
-        if text.startswith("json"):
-            text = text[4:]
-        text = text.strip()
+    text = response.content[0].text.strip()
+    if "```json" in text:
+        text = text.split("```json")[1].split("```")[0].strip()
+    elif "```" in text:
+        text = text.split("```")[1].split("```")[0].strip()
 
     try:
         return json.loads(text)

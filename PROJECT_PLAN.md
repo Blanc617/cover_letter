@@ -15,9 +15,8 @@
 | Backend | FastAPI (Python) |
 | DB + Vector DB + Storage | Supabase (PostgreSQL + pgvector) |
 | 인증 | Supabase OAuth (Google + Naver) |
-| 공고 이미지 분석 | Gemini 2.0 Flash (Vision) |
-| 자소서 생성 | Claude Sonnet 4.6 |
-| 크롤러 | Python (Playwright + BeautifulSoup) |
+| Vision / 구조화 / 자소서 생성 | Claude Sonnet 4.6 |
+| 임베딩 | BGE-M3 (로컬, FlagEmbedding) |
 
 ---
 
@@ -36,6 +35,9 @@
   └─ 자소서 생성 요청
         ├─ RAG: Vector DB에서 해당 기업 합격 자소서 검색
         └─ Claude Sonnet 4.6: 공고 + 프로필 + RAG 결과 → 자소서 생성
+
+[관리자]
+  └─ 어드민 페이지에서 합격 자소서 직접 입력 → RAG DB 구축
 ```
 
 ---
@@ -51,14 +53,6 @@
 - [ ] 이미지 기반 PDF 감지 → Gemini Vision fallback 테스트
 - [ ] 포트폴리오 PDF (이미지 많음) 파싱 품질 확인
 - [ ] 추출 결과를 구조화된 JSON으로 변환 (경력, 기술스택, 프로젝트 등)
-
-#### 1-2. 크롤링 가능 여부 검증
-- [ ] 사람인 합격 자소서 페이지 구조 분석 및 크롤링 테스트
-- [ ] 잡코리아 합격 자소서 페이지 구조 분석 및 크롤링 테스트
-- [ ] 링커리어 합격 자소서 페이지 구조 분석 및 크롤링 테스트
-- [ ] robots.txt / 이용약관 검토
-- [ ] Playwright 동적 렌더링 대응 (로그인 필요 여부 확인)
-- [ ] 수집 데이터 구조 정의 (회사명, 직군, 문항, 답변 텍스트)
 
 ---
 
@@ -91,15 +85,14 @@
 
 ### Phase 3 - RAG 파이프라인 구축
 
-#### 3-1. 크롤링 파이프라인
-- [ ] 사람인 / 잡코리아 / 링커리어 크롤러 구현
-- [ ] 수집 데이터 전처리 및 정제
-- [ ] 문항-답변 단위로 청킹(chunking)
+#### 3-1. 어드민 데이터 입력
+- [ ] 합격 자소서 입력 폼 구현 (회사명, 직군, 문항, 답변)
+- [ ] 입력 데이터 저장 및 관리 (목록 조회, 수정, 삭제)
 
 #### 3-2. 벡터 DB 구축
 - [ ] Supabase pgvector 테이블 설계
-- [ ] Embedding 모델 선정 (OpenAI text-embedding-3-small 또는 Gemini)
-- [ ] 크롤링 데이터 Embedding 후 Supabase 저장
+- [ ] BGE-M3 모델로 Embedding 생성 (FlagEmbedding 라이브러리)
+- [ ] 입력 데이터 Embedding 후 Supabase 저장
 - [ ] 유사도 검색 쿼리 구현 (회사명 + 직군 + 문항 기반)
 
 #### 3-3. RAG 연동
@@ -115,9 +108,11 @@
 - [ ] 메인 페이지 (서비스 소개)
 - [ ] 공고 업로드 페이지
 - [ ] 이력서/포트폴리오 업로드 페이지
+- [ ] 이전 자소서 입력 페이지 (PDF 업로드 또는 텍스트 직접 입력)
 - [ ] 이력서 템플릿 폼 페이지 (fallback)
 - [ ] 자소서 생성 결과 페이지 (스트리밍 표시)
 - [ ] 생성 기록 페이지
+- [ ] 어드민 페이지 (합격 자소서 입력/관리)
 
 #### 4-2. UI/UX
 - [ ] 파일 드래그 앤 드롭 업로드
@@ -133,6 +128,8 @@
 - [ ] Supabase Auth 설정
 - [ ] Google OAuth 연동
 - [ ] Naver OAuth 커스텀 provider 연동
+- [ ] users 테이블에 `role` 컬럼 추가 (`user` / `admin`)
+- [ ] Next.js 미들웨어로 `/admin` 경로 접근 시 role 체크 → admin 아니면 메인으로 리다이렉트
 - [ ] 사용자별 이력서 저장 및 불러오기
 - [ ] 생성된 자소서 히스토리 저장
 
@@ -152,7 +149,7 @@
 
 ```sql
 -- 사용자
-users (id, email, name, created_at)
+users (id, email, name, role, created_at)  -- role: 'user' | 'admin'
 
 -- 이력서
 resumes (id, user_id, file_url, parsed_json, created_at)
@@ -164,7 +161,7 @@ job_postings (id, user_id, image_url, parsed_json, company, position, created_at
 cover_letters (id, user_id, resume_id, job_posting_id, content_json, created_at)
 
 -- 합격 자소서 (RAG용)
-rag_documents (id, company, position, question, answer, source, embedding vector(1536), created_at)
+rag_documents (id, company, position, question, answer, embedding vector(1024), created_at)  -- BGE-M3 차원
 ```
 
 ---
@@ -173,10 +170,8 @@ rag_documents (id, company, position, question, answer, source, embedding vector
 
 | 리스크 | 대응 방안 |
 |--------|-----------|
-| 크롤링 차단 (로그인 필요, IP 차단) | Playwright + 프록시 / 수동 데이터 수집 병행 |
 | 이미지 기반 PDF 파싱 실패 | Gemini Vision fallback + 템플릿 폼 fallback |
 | 네이버 OAuth Supabase 미지원 | 커스텀 OAuth provider 직접 구현 |
-| 크롤링 법적 이슈 | robots.txt 준수, 개인정보 미수집, 공개 데이터만 활용 |
 | 자소서 품질 편차 | 프롬프트 튜닝 + RAG 보강 |
 
 ---
@@ -185,5 +180,10 @@ rag_documents (id, company, position, question, answer, source, embedding vector
 
 - [x] 기술 스택 확정
 - [x] 전체 아키텍처 설계
-- [ ] **Phase 1 - PDF 파싱 검증** ← 현재 단계
-- [ ] Phase 1 - 크롤링 가능 여부 검증
+- [x] 프로젝트 초기 세팅 (FastAPI + Next.js)
+- [x] Phase 1 - PDF 파싱 검증 (pdfplumber + Claude Vision fallback + 구조화)
+- [x] Phase 2 - 백엔드 핵심 기능 구현 (공고 분석 / 이력서 파싱 / 자소서 스트리밍 API)
+- [x] Phase 3 - RAG 파이프라인 구축 (Supabase pgvector + BGE-M3 + 어드민 CRUD API)
+- [x] Phase 4 - 프론트엔드 구현 (메인·생성·어드민 페이지)
+- [x] **Phase 5 - 인증 및 사용자 관리** (Google OAuth + 이력서/자소서 저장 + 히스토리)
+- [ ] **Phase 6 - 배포** ← 현재 단계

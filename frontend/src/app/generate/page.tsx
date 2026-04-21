@@ -4,11 +4,11 @@ import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import StepJobPosting from "@/components/steps/StepJobPosting";
 import StepResume from "@/components/steps/StepResume";
+import StepPrevCoverLetter from "@/components/steps/StepPrevCoverLetter";
 import StepResult from "@/components/steps/StepResult";
-import Link from "next/link";
-import { ChevronLeft } from "lucide-react";
+import PageHeader from "@/components/PageHeader";
 
-const STEPS = ["공고 분석", "이력서 업로드", "자소서 생성"];
+const STEPS = ["공고 분석", "이력서 업로드", "이전 자소서", "자소서 생성"];
 
 export interface JobPosting {
   company: string;
@@ -36,8 +36,10 @@ export default function GeneratePage() {
   const [step, setStep] = useState(0);
   const [jobPosting, setJobPosting] = useState<JobPosting | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [prevCoverLetter, setPrevCoverLetter] = useState<string | null>(null);
+  const [refLetterIds, setRefLetterIds] = useState<number[]>([]);
 
-  const goNext = () => setStep((s) => Math.min(s + 1, 2));
+  const goNext = () => setStep((s) => Math.min(s + 1, 3));
   const goPrev = () => setStep((s) => Math.max(s - 1, 0));
 
   return (
@@ -47,28 +49,13 @@ export default function GeneratePage() {
         className="pointer-events-none fixed inset-0 z-0"
         style={{
           background:
-            "radial-gradient(ellipse 60% 40% at 50% 0%, rgba(201,169,110,0.08) 0%, transparent 60%)",
+            "radial-gradient(ellipse 60% 40% at 50% 0%, color-mix(in srgb, var(--accent) 8%, transparent) 0%, transparent 60%)",
         }}
       />
 
-      {/* Header */}
-      <header
-        className="relative z-10 flex items-center justify-between px-8 py-5"
-        style={{ borderBottom: "1px solid var(--border)" }}
-      >
-        <Link
-          href="/"
-          className="flex items-center gap-2 text-sm transition-colors hover:text-[var(--accent)]"
-          style={{ color: "var(--text-muted)" }}
-        >
-          <ChevronLeft size={16} />
-          홈
-        </Link>
-        <span className="font-display text-lg" style={{ color: "var(--text)" }}>
-          Letter<span style={{ color: "var(--accent)" }}>craft</span>
-        </span>
-        <div className="w-16" />
-      </header>
+      <div className="relative z-10">
+        <PageHeader pageTitle="자소서 생성" />
+      </div>
 
       {/* Step indicator */}
       <div className="relative z-10 flex items-center justify-center gap-0 py-8">
@@ -115,10 +102,7 @@ export default function GeneratePage() {
                 transition={{ duration: 0.3 }}
               >
                 <StepJobPosting
-                  onComplete={(data) => {
-                    setJobPosting(data);
-                    goNext();
-                  }}
+                  onComplete={(data) => { setJobPosting(data); goNext(); }}
                 />
               </motion.div>
             )}
@@ -132,16 +116,27 @@ export default function GeneratePage() {
               >
                 <StepResume
                   onBack={goPrev}
-                  onComplete={(data) => {
-                    setProfile(data);
-                    goNext();
-                  }}
+                  onComplete={(data) => { setProfile(data); goNext(); }}
                 />
               </motion.div>
             )}
-            {step === 2 && jobPosting && profile && (
+            {step === 2 && (
               <motion.div
                 key="step2"
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -20 }}
+                transition={{ duration: 0.3 }}
+              >
+                <StepPrevCoverLetter
+                  onBack={goPrev}
+                  onComplete={(text, refIds) => { setPrevCoverLetter(text); setRefLetterIds(refIds); goNext(); }}
+                />
+              </motion.div>
+            )}
+            {step === 3 && jobPosting && profile && (
+              <motion.div
+                key="step3"
                 initial={{ opacity: 0, x: 20 }}
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: -20 }}
@@ -150,6 +145,8 @@ export default function GeneratePage() {
                 <StepResult
                   jobPosting={jobPosting}
                   profile={profile}
+                  prevCoverLetter={prevCoverLetter}
+                  refLetterIds={refLetterIds}
                   onBack={goPrev}
                 />
               </motion.div>

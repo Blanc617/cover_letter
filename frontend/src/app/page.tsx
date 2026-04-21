@@ -2,28 +2,33 @@
 
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { ArrowRight, FileText, ImageIcon, Sparkles, Zap } from "lucide-react";
+import { ArrowRight } from "lucide-react";
+import PageHeader from "@/components/PageHeader";
 
 const features = [
   {
-    icon: <ImageIcon size={20} />,
+    step: "01",
     title: "공고 분석",
-    desc: "채용 공고 캡처 이미지를 올리면 AI가 직무·요건을 자동으로 파악합니다.",
+    desc: "채용 공고 캡처 이미지를 올리면 AI가 직무·요건·자소서 문항을 자동으로 파악합니다.",
+    label: "Vision AI",
   },
   {
-    icon: <FileText size={20} />,
+    step: "02",
     title: "이력서 파싱",
-    desc: "PDF 이력서를 업로드하면 경력·기술스택·프로젝트를 구조화합니다.",
+    desc: "PDF 이력서를 업로드하면 경력·기술스택·프로젝트를 정밀하게 구조화합니다.",
+    label: "PDF Parsing",
   },
   {
-    icon: <Sparkles size={20} />,
+    step: "03",
     title: "맞춤 자소서 생성",
-    desc: "Claude Sonnet이 지원자의 경험을 공고에 최적화된 자소서로 작성합니다.",
+    desc: "Claude Sonnet이 지원자의 경험과 공고를 분석해 최적화된 자소서를 실시간으로 작성합니다.",
+    label: "Claude Sonnet",
   },
   {
-    icon: <Zap size={20} />,
+    step: "04",
     title: "합격 자소서 RAG",
-    desc: "실제 합격자들의 자소서 패턴을 학습하여 완성도 높은 글을 만듭니다.",
+    desc: "실제 합격자들의 자소서 패턴을 벡터 검색으로 참고하여 완성도를 높입니다.",
+    label: "RAG",
   },
 ];
 
@@ -44,30 +49,13 @@ export default function HomePage() {
         className="pointer-events-none fixed inset-0 z-0"
         style={{
           background:
-            "radial-gradient(ellipse 80% 50% at 50% -10%, rgba(201,169,110,0.12) 0%, transparent 70%)",
+            "radial-gradient(ellipse 80% 50% at 50% -10%, color-mix(in srgb, var(--accent) 12%, transparent) 0%, transparent 70%)",
         }}
       />
 
-      {/* Nav */}
-      <nav
-        className="relative z-10 flex items-center justify-between px-8 py-6"
-        style={{ borderBottom: "1px solid var(--border)" }}
-      >
-        <span className="font-display text-xl tracking-tight" style={{ color: "var(--text)" }}>
-          Letter<span style={{ color: "var(--accent)" }}>craft</span>
-        </span>
-        <Link
-          href="/generate"
-          className="flex items-center gap-2 text-sm px-4 py-2 rounded-full transition-colors duration-200 hover:border-[var(--accent)] hover:text-[var(--accent)]"
-          style={{
-            background: "var(--bg-card)",
-            border: "1px solid var(--border-light)",
-            color: "var(--text-muted)",
-          }}
-        >
-          시작하기 <ArrowRight size={14} />
-        </Link>
-      </nav>
+      <div className="relative z-10">
+        <PageHeader />
+      </div>
 
       {/* Hero */}
       <section className="relative z-10 flex-1 flex flex-col items-center justify-center text-center px-6 py-24">
@@ -131,49 +119,74 @@ export default function HomePage() {
       </section>
 
       {/* Features */}
-      <section
-        className="relative z-10 px-6 py-20"
-        style={{ borderTop: "1px solid var(--border)" }}
-      >
+      <section className="relative z-10 px-6 py-24" style={{ borderTop: "1px solid var(--border)" }}>
         <div className="max-w-5xl mx-auto">
+
+          {/* 섹션 헤더 */}
+          <motion.div
+            initial={{ opacity: 0, y: 16 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            transition={{ duration: 0.5 }}
+            className="flex items-center gap-4 mb-14"
+          >
+            <div className="h-px flex-1" style={{ background: "var(--border)" }} />
+            <span className="text-xs tracking-widest uppercase" style={{ color: "var(--accent)", letterSpacing: "0.2em" }}>
+              How it works
+            </span>
+            <div className="h-px flex-1" style={{ background: "var(--border)" }} />
+          </motion.div>
+
+          {/* 카드 목록 */}
           <motion.div
             variants={container}
             initial="hidden"
             whileInView="show"
             viewport={{ once: true }}
-            className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4"
+            className="grid grid-cols-1 md:grid-cols-2 gap-5"
           >
             {features.map((f, i) => (
-              <motion.div
-                key={i}
-                variants={item}
-                className="p-6 rounded-2xl transition-all duration-300 cursor-default hover:border-[var(--border-light)]"
-                style={{
-                  background: "var(--bg-card)",
-                  border: "1px solid var(--border)",
-                }}
-              >
+              <motion.div key={i} variants={item}>
                 <div
-                  className="w-9 h-9 rounded-xl flex items-center justify-center mb-4"
+                  className="relative flex gap-6 p-7 rounded-2xl overflow-hidden"
                   style={{
-                    background: "rgba(201,169,110,0.12)",
-                    color: "var(--accent)",
+                    background: "var(--bg-card)",
+                    border: "1px solid var(--border)",
+                    boxShadow: "0 1px 4px rgba(0,0,0,0.04)",
                   }}
                 >
-                  {f.icon}
+                  {/* 스텝 번호 */}
+                  <div className="shrink-0 pt-0.5">
+                    <span
+                      className="font-display text-3xl leading-none select-none"
+                      style={{ color: "color-mix(in srgb, var(--accent) 20%, transparent)" }}
+                    >
+                      {f.step}
+                    </span>
+                  </div>
+
+                  {/* 내용 */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-2">
+                      <h3 className="font-medium text-base" style={{ color: "var(--text)" }}>
+                        {f.title}
+                      </h3>
+                      <span
+                        className="text-xs px-2 py-0.5 rounded-full"
+                        style={{
+                          background: "color-mix(in srgb, var(--accent) 10%, transparent)",
+                          color: "var(--accent)",
+                          border: "1px solid color-mix(in srgb, var(--accent) 20%, transparent)",
+                        }}
+                      >
+                        {f.label}
+                      </span>
+                    </div>
+                    <p className="text-sm leading-relaxed" style={{ color: "var(--text-muted)" }}>
+                      {f.desc}
+                    </p>
+                  </div>
                 </div>
-                <h3
-                  className="text-sm font-medium mb-2"
-                  style={{ color: "var(--text)" }}
-                >
-                  {f.title}
-                </h3>
-                <p
-                  className="text-xs leading-relaxed"
-                  style={{ color: "var(--text-dim)" }}
-                >
-                  {f.desc}
-                </p>
               </motion.div>
             ))}
           </motion.div>
@@ -185,7 +198,7 @@ export default function HomePage() {
         className="relative z-10 px-8 py-6 text-xs text-center"
         style={{ borderTop: "1px solid var(--border)", color: "var(--text-dim)" }}
       >
-        © 2026 Lettercraft. AI가 작성한 자소서는 지원자의 경험을 기반으로 합니다.
+        © 2026 Coverly. AI가 작성한 자소서는 지원자의 경험을 기반으로 합니다.
       </footer>
     </main>
   );

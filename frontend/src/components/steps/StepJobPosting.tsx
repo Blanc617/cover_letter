@@ -69,7 +69,7 @@ export default function StepJobPosting({ onComplete }: Props) {
         className="dropzone rounded-2xl p-10 flex flex-col items-center justify-center gap-3 cursor-pointer transition-all duration-200"
         style={{
           border: `1.5px dashed ${isDragActive ? "var(--accent)" : "var(--border-light)"}`,
-          background: isDragActive ? "rgba(201,169,110,0.04)" : "var(--bg-card)",
+          background: isDragActive ? "color-mix(in srgb, var(--accent) 4%, transparent)" : "var(--bg-card)",
           minHeight: "200px",
         }}
       >
@@ -84,7 +84,7 @@ export default function StepJobPosting({ onComplete }: Props) {
           <>
             <div
               className="w-12 h-12 rounded-2xl flex items-center justify-center"
-              style={{ background: "rgba(201,169,110,0.1)", color: "var(--accent)" }}
+              style={{ background: "color-mix(in srgb, var(--accent) 10%, transparent)", color: "var(--accent)" }}
             >
               <ImageIcon size={22} />
             </div>

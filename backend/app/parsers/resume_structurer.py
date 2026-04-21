@@ -32,13 +32,13 @@ def structure_resume(raw_text: str) -> dict:
             "activities": [str, ...]
         }
     """
-    from openai import OpenAI
+    import anthropic
 
-    api_key = os.getenv("OPENAI_API_KEY")
+    api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
-        raise ValueError("OPENAI_API_KEY 환경변수가 설정되지 않았습니다.")
+        raise ValueError("ANTHROPIC_API_KEY 환경변수가 설정되지 않았습니다.")
 
-    client = OpenAI(api_key=api_key)
+    client = anthropic.Anthropic(api_key=api_key)
 
     prompt = f"""다음은 이력서 텍스트입니다. 이 텍스트를 분석하여 아래 JSON 형식으로 구조화해주세요.
 없는 항목은 빈 값으로 처리하세요. 반드시 유효한 JSON만 반환하세요.
@@ -86,18 +86,17 @@ def structure_resume(raw_text: str) -> dict:
   "activities": ["대외활동1"]
 }}"""
 
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "user", "content": prompt}],
-        max_tokens=2000
+    response = client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=4096,
+        messages=[{"role": "user", "content": prompt}]
     )
-    text = response.choices[0].message.content.strip()
+    text = response.content[0].text.strip()
 
     # ```json ... ``` 블록 제거
-    if text.startswith("```"):
-        text = text.split("```")[1]
-        if text.startswith("json"):
-            text = text[4:]
-        text = text.strip()
+    if "```json" in text:
+        text = text.split("```json")[1].split("```")[0].strip()
+    elif "```" in text:
+        text = text.split("```")[1].split("```")[0].strip()
 
     return json.loads(text)
