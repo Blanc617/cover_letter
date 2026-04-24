@@ -4,6 +4,7 @@ class Settings(BaseSettings):
     ANTHROPIC_API_KEY: str
     SUPABASE_URL: str
     SUPABASE_SERVICE_ROLE_KEY: str
+    TAVILY_API_KEY: str = ""
 
     class Config:
         env_file = ".env"

@@ -29,7 +29,7 @@ class SaveCoverLetterRequest(BaseModel):
 @router.post("/resume", status_code=201)
 async def save_resume(body: SaveResumeRequest, user_id: str = Depends(get_current_user)):
     """파싱된 이력서 저장"""
-    result = supabase.table("resumes").insert({
+    result = supabase.table("user_resumes").insert({
         "user_id": user_id,
         "parsed_json": body.parsed_json,
     }).execute()

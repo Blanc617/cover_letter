@@ -141,7 +141,6 @@ export default function StepResume({ onBack, onComplete }: Props) {
 
   // Upload mode
   const [resumeFile, setResumeFile] = useState<File | null>(null);
-  const [portfolioFile, setPortfolioFile] = useState<File | null>(null);
 
   // Saved mode
   const [savedResumes, setSavedResumes] = useState<SavedResume[]>([]);
@@ -189,7 +188,7 @@ export default function StepResume({ onBack, onComplete }: Props) {
 
       // 2. 추출된 텍스트 → structure-text API (PDF 재업로드 없이)
       if (resume.text_content) {
-        const res = await fetch("http://localhost:8000/api/resume/structure-text", {
+        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"}/api/resume/structure-text`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ text: resume.text_content }),
@@ -215,8 +214,7 @@ export default function StepResume({ onBack, onComplete }: Props) {
     try {
       const form = new FormData();
       form.append("resume", resumeFile);
-      if (portfolioFile) form.append("portfolio", portfolioFile);
-      const res = await fetch("http://localhost:8000/api/resume/parse", {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"}/api/resume/parse`, {
         method: "POST", body: form,
       });
       if (!res.ok) throw new Error("이력서 파싱에 실패했습니다.");
@@ -236,7 +234,7 @@ export default function StepResume({ onBack, onComplete }: Props) {
       <div>
         <h2 className="font-display text-2xl mb-2" style={{ color: "var(--text)" }}>이력서 업로드</h2>
         <p className="text-sm" style={{ color: "var(--text-muted)" }}>
-          이력서는 필수, 포트폴리오는 선택입니다. 함께 업로드하면 더 정확한 자소서가 생성됩니다.
+          저장된 이력서를 선택하거나 PDF를 직접 업로드하세요.
         </p>
       </div>
 
@@ -275,17 +273,13 @@ export default function StepResume({ onBack, onComplete }: Props) {
         <div className="space-y-4">
           <DropArea label="이력서" hint="PDF를 드래그하거나 클릭하여 업로드" required={true}
             file={resumeFile} onFile={(f) => { setResumeFile(f); resetResult(); }} />
-          <DropArea label="포트폴리오" hint="PDF를 드래그하거나 클릭하여 업로드" required={false}
-            file={portfolioFile} onFile={(f) => { setPortfolioFile(f); resetResult(); }} />
           {resumeFile && (
             <button onClick={parseUpload} disabled={loading}
               className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl text-sm font-medium transition-all duration-200 disabled:opacity-50"
               style={{ background: "var(--accent)", color: "var(--bg)" }}>
-              {loading ? (
-                <><Loader2 size={16} className="animate-spin" />분석 중...</>
-              ) : (
-                <><FileText size={16} />{portfolioFile ? "이력서 + 포트폴리오 분석하기" : "이력서 분석하기"}</>
-              )}
+              {loading
+                ? <><Loader2 size={16} className="animate-spin" />분석 중...</>
+                : <><FileText size={16} />이력서 분석하기</>}
             </button>
           )}
         </div>
@@ -336,56 +330,171 @@ export default function StepResume({ onBack, onComplete }: Props) {
 
       {/* 결과 */}
       {result && (
-        <div className="rounded-2xl p-5 space-y-4"
-          style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}>
-          <div className="flex items-center gap-2">
-            <CheckCircle2 size={16} style={{ color: "var(--success)" }} />
+        <div className="rounded-2xl overflow-hidden"
+          style={{ border: "1px solid var(--border)" }}>
+
+          {/* 헤더 */}
+          <div className="flex items-center gap-2 px-5 py-3"
+            style={{ background: "var(--bg-card)", borderBottom: "1px solid var(--border)" }}>
+            <CheckCircle2 size={15} style={{ color: "var(--success)" }} />
             <span className="text-sm font-medium" style={{ color: "var(--success)" }}>분석 완료</span>
+            <span className="text-xs ml-auto" style={{ color: "var(--text-dim)" }}>
+              AI가 아래 정보를 자소서 작성에 활용합니다
+            </span>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="이름" value={result.name} />
+          <div className="p-5 space-y-5">
+            {/* 기본 정보 */}
+            <div className="flex items-start gap-4">
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 text-sm font-bold"
+                style={{ background: "color-mix(in srgb, var(--accent) 12%, transparent)", color: "var(--accent)" }}>
+                {result.name?.charAt(0) || "?"}
+              </div>
+              <div className="space-y-0.5">
+                <p className="text-sm font-semibold" style={{ color: "var(--text)" }}>{result.name}</p>
+                {Object.entries(result.contact || {}).filter(([, v]) => v).map(([k, v]) => (
+                  <p key={k} className="text-xs" style={{ color: "var(--text-muted)" }}>{v}</p>
+                ))}
+                {result.summary && (
+                  <p className="text-xs mt-1 leading-5" style={{ color: "var(--text-muted)" }}>{result.summary}</p>
+                )}
+              </div>
+            </div>
+
+            {/* 기술 스택 */}
             {result.skills.length > 0 && (
               <div>
-                <p className="text-xs mb-2" style={{ color: "var(--text-dim)" }}>기술 스택</p>
-                <div className="flex flex-wrap gap-1">
-                  {result.skills.slice(0, 8).map((s, i) => (
+                <p className="text-xs font-medium mb-2" style={{ color: "var(--text-dim)" }}>
+                  기술 스택 <span style={{ opacity: 0.6 }}>({result.skills.length}개)</span>
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {result.skills.map((s, i) => (
                     <span key={i} className="text-xs px-2 py-0.5 rounded-full"
-                      style={{ background: "color-mix(in srgb, var(--accent) 12%, transparent)", color: "var(--accent)" }}>
+                      style={{ background: "color-mix(in srgb, var(--accent) 10%, transparent)", color: "var(--accent)", border: "1px solid color-mix(in srgb, var(--accent) 20%, transparent)" }}>
                       {s}
                     </span>
                   ))}
-                  {result.skills.length > 8 && (
-                    <span className="text-xs" style={{ color: "var(--text-dim)" }}>+{result.skills.length - 8}</span>
-                  )}
                 </div>
               </div>
             )}
+
+            {/* 경력 */}
+            {result.experience.length > 0 && (
+              <div>
+                <p className="text-xs font-medium mb-2" style={{ color: "var(--text-dim)" }}>
+                  경력 <span style={{ opacity: 0.6 }}>({result.experience.length}건)</span>
+                </p>
+                <div className="space-y-2">
+                  {result.experience.map((e, i) => (
+                    <div key={i} className="px-3 py-2.5 rounded-xl"
+                      style={{ background: "var(--bg-hover)", border: "1px solid var(--border)" }}>
+                      <div className="flex items-center justify-between gap-2 mb-1">
+                        <p className="text-xs font-medium" style={{ color: "var(--text)" }}>
+                          {e.company} · {e.position}
+                        </p>
+                        <p className="text-xs flex-shrink-0" style={{ color: "var(--text-dim)" }}>{e.period}</p>
+                      </div>
+                      {e.description && (
+                        <p className="text-xs leading-5" style={{ color: "var(--text-muted)" }}>{e.description}</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* 학력 */}
+            {result.education.length > 0 && (
+              <div>
+                <p className="text-xs font-medium mb-2" style={{ color: "var(--text-dim)" }}>학력</p>
+                <div className="space-y-1.5">
+                  {result.education.map((e, i) => (
+                    <div key={i} className="flex items-center justify-between px-3 py-2 rounded-lg"
+                      style={{ background: "var(--bg-hover)" }}>
+                      <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                        {e.school} · {e.major} · {e.degree}
+                      </p>
+                      <p className="text-xs flex-shrink-0 ml-2" style={{ color: "var(--text-dim)" }}>{e.period}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* 프로젝트 */}
+            {result.projects.length > 0 && (
+              <div>
+                <p className="text-xs font-medium mb-2" style={{ color: "var(--text-dim)" }}>
+                  프로젝트 <span style={{ opacity: 0.6 }}>({result.projects.length}건)</span>
+                </p>
+                <div className="space-y-2">
+                  {result.projects.map((p, i) => (
+                    <div key={i} className="px-3 py-2.5 rounded-xl"
+                      style={{ background: "var(--bg-hover)", border: "1px solid var(--border)" }}>
+                      <div className="flex items-center justify-between gap-2 mb-1">
+                        <p className="text-xs font-medium" style={{ color: "var(--text)" }}>{p.name}</p>
+                        <p className="text-xs flex-shrink-0" style={{ color: "var(--text-dim)" }}>{p.period}</p>
+                      </div>
+                      {p.tech_stack?.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mb-1">
+                          {p.tech_stack.map((t, j) => (
+                            <span key={j} className="text-xs px-1.5 py-0.5 rounded"
+                              style={{ background: "color-mix(in srgb, var(--accent) 8%, transparent)", color: "var(--accent)" }}>
+                              {t}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      {p.description && (
+                        <p className="text-xs leading-5" style={{ color: "var(--text-muted)" }}>{p.description}</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* 자격증 · 활동 */}
+            <div className="grid grid-cols-2 gap-4">
+              {result.certifications.length > 0 && (
+                <div>
+                  <p className="text-xs font-medium mb-2" style={{ color: "var(--text-dim)" }}>자격증</p>
+                  <ul className="space-y-1">
+                    {result.certifications.map((c, i) => (
+                      <li key={i} className="text-xs px-2 py-1 rounded-lg"
+                        style={{ background: "var(--bg-hover)", color: "var(--text-muted)" }}>
+                        {c}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {result.activities.length > 0 && (
+                <div>
+                  <p className="text-xs font-medium mb-2" style={{ color: "var(--text-dim)" }}>활동</p>
+                  <ul className="space-y-1">
+                    {result.activities.map((a, i) => (
+                      <li key={i} className="text-xs px-2 py-1 rounded-lg"
+                        style={{ background: "var(--bg-hover)", color: "var(--text-muted)" }}>
+                        {a}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
           </div>
 
-          {result.experience.length > 0 && (
-            <div>
-              <p className="text-xs mb-2" style={{ color: "var(--text-dim)" }}>경력 ({result.experience.length}건)</p>
-              <ul className="space-y-1">
-                {result.experience.map((e, i) => (
-                  <li key={i} className="text-xs px-3 py-2 rounded-lg"
-                    style={{ background: "var(--bg-hover)", color: "var(--text-muted)" }}>
-                    {e.company} · {e.position} · {e.period}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          <div className="flex gap-3 pt-1">
+          {/* 액션 버튼 */}
+          <div className="flex gap-3 px-5 pb-5">
             <button
-              onClick={() => { setResult(null); setResumeFile(null); setPortfolioFile(null); setError(null); }}
+              onClick={() => { setResult(null); setResumeFile(null); setError(null); }}
               className="flex items-center gap-1 px-4 py-3 rounded-xl text-sm transition-colors"
               style={{ border: "1px solid var(--border)", color: "var(--text-muted)" }}>
               <ChevronLeft size={15} /> 다시 선택
             </button>
-            <button onClick={() => onComplete(result)}
-              className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-medium transition-all hover:opacity-90"
+            <button onClick={() => onComplete(result)} disabled={loading}
+              className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-medium transition-all hover:opacity-90 disabled:opacity-50"
               style={{ background: "var(--accent)", color: "var(--bg)" }}>
               다음 단계로 <ChevronRight size={15} />
             </button>

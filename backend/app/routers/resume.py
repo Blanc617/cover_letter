@@ -69,6 +69,7 @@ async def parse_resume(
     combined_text = f"[이력서]\n{resume_result['text']}"
 
     # 포트폴리오 파싱 (선택)
+    portfolio_text: str | None = None
     if portfolio and portfolio.filename:
         is_portfolio_pdf = (
             portfolio.content_type == "application/pdf"
@@ -79,11 +80,13 @@ async def parse_resume(
         portfolio_bytes = await portfolio.read()
         portfolio_result = parse_pdf(portfolio_bytes)
         if portfolio_result["success"]:
+            portfolio_text = portfolio_result["text"][:3000]
             combined_text += f"\n\n[포트폴리오]\n{portfolio_result['text']}"
 
     structured = structure_resume(combined_text)
     return {
         "parse_method": resume_result["method"],
         "page_count": resume_result["page_count"],
-        "profile": structured
+        "profile": structured,
+        "portfolio_text": portfolio_text,
     }

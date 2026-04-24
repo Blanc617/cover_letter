@@ -6,7 +6,6 @@
 import sys
 import csv
 import os
-import time
 import io
 from pathlib import Path
 
@@ -14,26 +13,22 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="repla
 sys.path.append(str(Path(__file__).parent.parent))
 
 from dotenv import load_dotenv
-from openai import OpenAI
+from sentence_transformers import SentenceTransformer
 from supabase import create_client
 
 load_dotenv()
 
-OPENAI_API_KEY  = os.getenv("OPENAI_API_KEY")
-SUPABASE_URL    = os.getenv("SUPABASE_URL")
-SUPABASE_KEY    = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
-openai_client   = OpenAI(api_key=OPENAI_API_KEY)
+print("BGE-M3 모델 로딩 중...")
+embedding_model = SentenceTransformer("BAAI/bge-m3")
 supabase        = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 
 def get_embedding(text: str) -> list[float]:
-    """OpenAI text-embedding-3-small로 임베딩 생성"""
-    response = openai_client.embeddings.create(
-        model="text-embedding-3-small",
-        input=text
-    )
-    return response.data[0].embedding
+    """BGE-M3로 임베딩 생성"""
+    return embedding_model.encode(text).tolist()
 
 
 def embed_text(company: str, position: str, question: str, answer: str) -> list[float]:
@@ -80,9 +75,6 @@ def import_csv(csv_path: str):
 
             print(f"  → 저장 완료")
             success += 1
-
-            # API 속도 제한 방지
-            time.sleep(0.3)
 
         except Exception as e:
             print(f"  → 오류: {e}")

@@ -8,27 +8,39 @@ import PageHeader from "@/components/PageHeader";
 const features = [
   {
     step: "01",
-    title: "공고 분석",
-    desc: "채용 공고 캡처 이미지를 올리면 AI가 직무·요건·자소서 문항을 자동으로 파악합니다.",
+    title: "공고 파싱",
+    desc: "채용 공고 이미지를 올리면 Vision AI가 직무·자격요건·자소서 문항을 자동으로 추출합니다. 이미지가 없으면 직접 입력도 가능합니다.",
     label: "Vision AI",
   },
   {
     step: "02",
-    title: "이력서 파싱",
-    desc: "PDF 이력서를 업로드하면 경력·기술스택·프로젝트를 정밀하게 구조화합니다.",
-    label: "PDF Parsing",
+    title: "회사 맞춤 분석",
+    desc: "지원 회사를 실시간 웹 검색해 인재상·핵심 가치·최근 사업 방향을 파악하고, 어떤 방향으로 써야 하는지 전략을 수립합니다.",
+    label: "Web Research",
   },
   {
     step: "03",
-    title: "맞춤 자소서 생성",
-    desc: "Claude Sonnet이 지원자의 경험과 공고를 분석해 최적화된 자소서를 실시간으로 작성합니다.",
-    label: "Claude Sonnet",
+    title: "이력서 + 포트폴리오",
+    desc: "PDF 이력서와 포트폴리오를 함께 업로드하면 경력·프로젝트·기술 스택을 구조화하고, 회사 분석 결과를 바탕으로 가장 어필될 경험을 선별합니다.",
+    label: "PDF Parsing",
   },
   {
     step: "04",
-    title: "합격 자소서 RAG",
-    desc: "실제 합격자들의 자소서 패턴을 벡터 검색으로 참고하여 완성도를 높입니다.",
-    label: "RAG",
+    title: "나만의 문체 반영",
+    desc: "기존에 작성한 자소서를 제공하면 AI가 문장 어미 패턴·어휘 습관·문단 호흡을 분석해 내 글쓰기 스타일 그대로 자소서를 씁니다.",
+    label: "문체 학습",
+  },
+  {
+    step: "05",
+    title: "문항별 초안 작성",
+    desc: "각 자소서 문항에 쓰고 싶은 경험과 내용을 직접 입력할 수 있습니다. AI는 초안의 내용과 표현을 그대로 살려 완성하며 없는 경험은 만들어내지 않습니다.",
+    label: "초안 기반 생성",
+  },
+  {
+    step: "06",
+    title: "AI 자소서 생성",
+    desc: "합격자 자소서 패턴을 벡터 검색으로 참고하고 AI 특유 표현은 철저히 배제합니다. 내 말투와 실제 경험만으로 문항별 자소서를 실시간으로 완성하고 자동 저장합니다.",
+    label: "RAG + Claude Sonnet",
   },
 ];
 
@@ -88,9 +100,9 @@ export default function HomePage() {
             className="text-lg mb-12 leading-relaxed max-w-xl mx-auto"
             style={{ color: "var(--text-muted)" }}
           >
-            공고 이미지와 이력서 PDF만 올리면,
+            공고 이미지, 이력서, 내 초안만 있으면
             <br />
-            AI가 기업 맞춤형 자기소개서를 실시간으로 작성합니다.
+            AI가 내 말투로 기업 맞춤형 자소서를 실시간으로 완성합니다.
           </motion.p>
 
           <motion.div variants={item}>

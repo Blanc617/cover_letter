@@ -18,6 +18,7 @@ type SavedLetter = {
   company: string | null;
   position: string | null;
   content: string;
+  category: string | null;
   created_at: string;
 };
 
@@ -30,6 +31,15 @@ export default function StepPrevCoverLetter({ onBack, onComplete }: Props) {
   const [letters, setLetters] = useState<SavedLetter[]>([]);
   const [lettersLoading, setLettersLoading] = useState(false);
   const [selected, setSelected] = useState<number[]>([]);
+  const [activeCategory, setActiveCategory] = useState<string>("전체");
+  const [extraTabs, setExtraTabs] = useState<string[]>([]);
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem("doc_extra_tabs_user_cover_letters");
+      if (stored) setExtraTabs(JSON.parse(stored));
+    } catch {}
+  }, []);
 
   // pdf mode
   const [file, setFile] = useState<File | null>(null);
@@ -53,7 +63,7 @@ export default function StepPrevCoverLetter({ onBack, onComplete }: Props) {
     if (!user) { setLettersLoading(false); return; }
     const { data } = await supabase
       .from("user_cover_letters")
-      .select("id, title, company, position, content, created_at")
+      .select("id, title, company, position, content, category, created_at")
       .eq("user_id", user.id)
       .order("created_at", { ascending: false });
     setLetters(data ?? []);
@@ -98,7 +108,7 @@ export default function StepPrevCoverLetter({ onBack, onComplete }: Props) {
       try {
         const form = new FormData();
         form.append("file", file);
-        const res = await fetch("http://localhost:8000/api/resume/parse-text", {
+        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"}/api/resume/parse-text`, {
           method: "POST", body: form,
         });
         if (!res.ok) throw new Error("PDF 파싱에 실패했습니다.");
@@ -179,47 +189,76 @@ export default function StepPrevCoverLetter({ onBack, onComplete }: Props) {
               </a>
             </div>
           ) : (
-            <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
-              {letters.map((letter) => {
-                const isSelected = selected.includes(letter.id);
-                const isDisabled = !isSelected && selected.length >= MAX_SELECT;
+            <>
+              {/* 카테고리 탭 */}
+              {(() => {
+                const itemCats = letters.map((l) => l.category ?? "일반").filter((c) => c !== "일반");
+                const allCustomCats = Array.from(new Set([...extraTabs, ...itemCats]));
+                if (allCustomCats.length === 0) return null;
                 return (
-                  <button
-                    key={letter.id}
-                    onClick={() => toggleSelect(letter.id)}
-                    disabled={isDisabled}
-                    className="w-full flex items-center gap-3 p-4 rounded-xl text-left transition-all duration-200 disabled:opacity-40"
-                    style={{
-                      background: isSelected ? "color-mix(in srgb, var(--accent) 8%, transparent)" : "var(--bg-card)",
-                      border: `1.5px solid ${isSelected ? "var(--accent)" : "var(--border)"}`,
-                    }}
-                  >
-                    {/* 체크박스 */}
-                    <div
-                      className="w-5 h-5 rounded-md flex items-center justify-center flex-shrink-0 transition-all"
-                      style={{
-                        background: isSelected ? "var(--accent)" : "var(--bg-hover)",
-                        border: `1.5px solid ${isSelected ? "var(--accent)" : "var(--border)"}`,
-                      }}
-                    >
-                      {isSelected && <Check size={12} style={{ color: "var(--bg)" }} />}
-                    </div>
-
-                    {/* 내용 */}
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium truncate" style={{ color: "var(--text)" }}>
-                        {letter.title}
-                      </p>
-                      <p className="text-xs mt-0.5" style={{ color: "var(--text-dim)" }}>
-                        {[letter.company, letter.position].filter(Boolean).join(" · ")}
-                        {letter.company || letter.position ? " · " : ""}
-                        {new Date(letter.created_at).toLocaleDateString("ko-KR")}
-                      </p>
-                    </div>
-                  </button>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {["전체", ...allCustomCats].map((cat) => (
+                      <button
+                        key={cat}
+                        onClick={() => setActiveCategory(cat)}
+                        className="px-3 py-1 rounded-full text-xs font-medium transition-all"
+                        style={{
+                          background: activeCategory === cat ? "var(--accent)" : "var(--bg-card)",
+                          color: activeCategory === cat ? "var(--bg)" : "var(--text-muted)",
+                          border: `1px solid ${activeCategory === cat ? "var(--accent)" : "var(--border)"}`,
+                        }}
+                      >
+                        {cat}
+                        <span className="ml-1 opacity-70">
+                          {cat === "전체" ? letters.length : letters.filter((l) => (l.category ?? "일반") === cat).length}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
                 );
-              })}
-            </div>
+              })()}
+
+              <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                {letters
+                  .filter((l) => activeCategory === "전체" || (l.category ?? "일반") === activeCategory)
+                  .map((letter) => {
+                    const isSelected = selected.includes(letter.id);
+                    const isDisabled = !isSelected && selected.length >= MAX_SELECT;
+                    return (
+                      <button
+                        key={letter.id}
+                        onClick={() => toggleSelect(letter.id)}
+                        disabled={isDisabled}
+                        className="w-full flex items-center gap-3 p-4 rounded-xl text-left transition-all duration-200 disabled:opacity-40"
+                        style={{
+                          background: isSelected ? "color-mix(in srgb, var(--accent) 8%, transparent)" : "var(--bg-card)",
+                          border: `1.5px solid ${isSelected ? "var(--accent)" : "var(--border)"}`,
+                        }}
+                      >
+                        <div
+                          className="w-5 h-5 rounded-md flex items-center justify-center flex-shrink-0 transition-all"
+                          style={{
+                            background: isSelected ? "var(--accent)" : "var(--bg-hover)",
+                            border: `1.5px solid ${isSelected ? "var(--accent)" : "var(--border)"}`,
+                          }}
+                        >
+                          {isSelected && <Check size={12} style={{ color: "var(--bg)" }} />}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate" style={{ color: "var(--text)" }}>
+                            {letter.title}
+                          </p>
+                          <p className="text-xs mt-0.5" style={{ color: "var(--text-dim)" }}>
+                            {letter.category ?? "일반"}
+                            {(letter.company || letter.position) ? ` · ${[letter.company, letter.position].filter(Boolean).join(" · ")}` : ""}
+                            {" · "}{new Date(letter.created_at).toLocaleDateString("ko-KR")}
+                          </p>
+                        </div>
+                      </button>
+                    );
+                  })}
+              </div>
+            </>
           )}
         </div>
       )}

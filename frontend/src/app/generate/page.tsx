@@ -1,14 +1,17 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import StepJobPosting from "@/components/steps/StepJobPosting";
 import StepResume from "@/components/steps/StepResume";
+import StepPortfolio from "@/components/steps/StepPortfolio";
 import StepPrevCoverLetter from "@/components/steps/StepPrevCoverLetter";
+import StepUserDrafts from "@/components/steps/StepUserDrafts";
+import type { UserDraft } from "@/components/steps/StepUserDrafts";
 import StepResult from "@/components/steps/StepResult";
 import PageHeader from "@/components/PageHeader";
 
-const STEPS = ["공고 분석", "이력서 업로드", "이전 자소서", "자소서 생성"];
+const STEPS = ["공고 분석", "이력서 업로드", "포트폴리오 업로드", "이전 자소서", "자소서 문항", "자소서 생성"];
 
 export interface JobPosting {
   company: string;
@@ -30,16 +33,46 @@ export interface Profile {
   projects: { name: string; period: string; tech_stack: string[]; description: string }[];
   certifications: string[];
   activities: string[];
+  portfolio_text?: string;
 }
+
+const SESSION_KEY = "generate_wizard_state";
 
 export default function GeneratePage() {
   const [step, setStep] = useState(0);
   const [jobPosting, setJobPosting] = useState<JobPosting | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [portfolioText, setPortfolioText] = useState<string | null>(null);
   const [prevCoverLetter, setPrevCoverLetter] = useState<string | null>(null);
   const [refLetterIds, setRefLetterIds] = useState<number[]>([]);
+  const [userDrafts, setUserDrafts] = useState<UserDraft[]>([]);
 
-  const goNext = () => setStep((s) => Math.min(s + 1, 3));
+  // Restore state from sessionStorage on mount
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem(SESSION_KEY);
+      if (!raw) return;
+      const saved = JSON.parse(raw);
+      if (saved.step !== undefined) setStep(saved.step);
+      if (saved.jobPosting) setJobPosting(saved.jobPosting);
+      if (saved.profile) setProfile(saved.profile);
+      if (saved.portfolioText !== undefined) setPortfolioText(saved.portfolioText);
+      if (saved.prevCoverLetter !== undefined) setPrevCoverLetter(saved.prevCoverLetter);
+      if (saved.refLetterIds) setRefLetterIds(saved.refLetterIds);
+      if (saved.userDrafts) setUserDrafts(saved.userDrafts);
+    } catch {}
+  }, []);
+
+  // Persist state to sessionStorage whenever it changes
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(SESSION_KEY, JSON.stringify({
+        step, jobPosting, profile, portfolioText, prevCoverLetter, refLetterIds, userDrafts,
+      }));
+    } catch {}
+  }, [step, jobPosting, profile, portfolioText, prevCoverLetter, refLetterIds, userDrafts]);
+
+  const goNext = () => setStep((s) => Math.min(s + 1, 5));
   const goPrev = () => setStep((s) => Math.max(s - 1, 0));
 
   return (
@@ -128,13 +161,13 @@ export default function GeneratePage() {
                 exit={{ opacity: 0, x: -20 }}
                 transition={{ duration: 0.3 }}
               >
-                <StepPrevCoverLetter
+                <StepPortfolio
                   onBack={goPrev}
-                  onComplete={(text, refIds) => { setPrevCoverLetter(text); setRefLetterIds(refIds); goNext(); }}
+                  onComplete={(text) => { setPortfolioText(text); goNext(); }}
                 />
               </motion.div>
             )}
-            {step === 3 && jobPosting && profile && (
+            {step === 3 && (
               <motion.div
                 key="step3"
                 initial={{ opacity: 0, x: 20 }}
@@ -142,11 +175,40 @@ export default function GeneratePage() {
                 exit={{ opacity: 0, x: -20 }}
                 transition={{ duration: 0.3 }}
               >
+                <StepPrevCoverLetter
+                  onBack={goPrev}
+                  onComplete={(text, refIds) => { setPrevCoverLetter(text); setRefLetterIds(refIds); goNext(); }}
+                />
+              </motion.div>
+            )}
+            {step === 4 && (
+              <motion.div
+                key="step4"
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -20 }}
+                transition={{ duration: 0.3 }}
+              >
+                <StepUserDrafts
+                  onBack={goPrev}
+                  onComplete={(drafts) => { setUserDrafts(drafts); goNext(); }}
+                />
+              </motion.div>
+            )}
+            {step === 5 && jobPosting && profile && (
+              <motion.div
+                key="step5"
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -20 }}
+                transition={{ duration: 0.3 }}
+              >
                 <StepResult
                   jobPosting={jobPosting}
-                  profile={profile}
+                  profile={portfolioText ? { ...profile, portfolio_text: portfolioText } : profile}
                   prevCoverLetter={prevCoverLetter}
                   refLetterIds={refLetterIds}
+                  userDrafts={userDrafts}
                   onBack={goPrev}
                 />
               </motion.div>

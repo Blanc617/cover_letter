@@ -6,7 +6,7 @@ import { Plus, Trash2, Pencil, X, Check, Loader2, Database } from "lucide-react"
 import PageHeader from "@/components/PageHeader";
 import { createClient } from "@/lib/supabase/client";
 
-const API = "http://localhost:8000/api/admin/rag";
+const API = `${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"}/api/admin/rag`;
 
 async function getToken(): Promise<string> {
   const supabase = createClient();
