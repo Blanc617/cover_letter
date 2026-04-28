@@ -33,7 +33,8 @@ class RagDocumentUpdate(BaseModel):
 
 
 def generate_embedding(company: str, position: str, question: str, answer: str) -> list[float]:
-    text = f"회사: {company}\n직군: {position}\n문항: {question}\n답변: {answer}"
+    # 검색 쿼리(회사+직군+문항)와 동일한 구조로 임베딩 생성 → 검색 정확도 향상
+    text = f"회사: {company}\n직군: {position}\n문항: {question}"
     return embedding_model.encode(text).tolist()
 
 
@@ -97,3 +98,20 @@ async def delete_rag_document(doc_id: int, _: str = Depends(get_current_user)):
         raise HTTPException(status_code=404, detail="문서를 찾을 수 없습니다.")
 
     supabase.table("rag_documents").delete().eq("id", doc_id).execute()
+
+
+@router.post("/rag/reembed-all")
+async def reembed_all_rag_documents(_: str = Depends(get_current_user)):
+    """기존 RAG 데이터 전체 재임베딩 (임베딩 방식 변경 시 실행)"""
+    result = supabase.table("rag_documents").select("id, company, position, question, answer").execute()
+    docs = result.data or []
+    if not docs:
+        return {"updated": 0}
+
+    updated = 0
+    for doc in docs:
+        embedding = generate_embedding(doc["company"], doc["position"], doc["question"], doc["answer"])
+        supabase.table("rag_documents").update({"embedding": embedding}).eq("id", doc["id"]).execute()
+        updated += 1
+
+    return {"updated": updated}

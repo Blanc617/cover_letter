@@ -40,30 +40,39 @@ class GenerateRequest(BaseModel):
 def get_rag_context(company: str, job_field: str, question: str, is_freeform: bool = False) -> str:
     """Vector DB에서 유사 합격 자소서 검색
 
-    - 특정 질문: 회사 + 직군 + 문항 기반으로 유사 사례 3개
-    - 자유형식: 직군 기반으로 구성 참고할 사례 5개 (회사·질문 필터 없음)
+    - 특정 질문: 1차 같은 회사+직군, 없으면 2차 같은 직군으로 fallback
+    - 자유형식: 직군 기반으로 구성 참고할 사례 5개
     """
     try:
         if is_freeform:
-            # 자유형식: 같은 직군의 합격 자소서 구성 참고
             query = f"직군: {job_field} 자기소개서 경험 역량 성과 지원 동기"
             embedding = embedding_model.encode(query).tolist()
             result = supabase.rpc("search_rag_cover_letters", {
                 "query_embedding": embedding,
-                "match_company": None,
+                "match_company": "",
                 "match_job_field": job_field,
                 "match_count": 5
             }).execute()
         else:
-            # 특정 질문: 회사 + 직군 + 문항 유사도 기반 검색
             query = f"회사: {company}\n직군: {job_field}\n문항: {question}"
             embedding = embedding_model.encode(query).tolist()
+
+            # 1차: 같은 회사 + 직군으로 검색
             result = supabase.rpc("search_rag_cover_letters", {
                 "query_embedding": embedding,
                 "match_company": company,
                 "match_job_field": job_field,
                 "match_count": 3
             }).execute()
+
+            # 2차 fallback: 같은 회사 결과 없으면 직군만으로 재검색
+            if not result.data:
+                result = supabase.rpc("search_rag_cover_letters", {
+                    "query_embedding": embedding,
+                    "match_company": "",
+                    "match_job_field": job_field,
+                    "match_count": 3
+                }).execute()
 
         if not result.data:
             return ""
@@ -183,11 +192,16 @@ def build_prompt(
     position = job_posting.get('position', '')
 
     company_section = (
-        f"\n\n[회사 분석 — 이 회사가 원하는 것, 문화, 방향성]\n{company_context}"
+        f"\n\n[회사 분석 — 반드시 아래 내용을 자소서에 구체적으로 반영할 것]\n"
+        f"※ 이 회사의 인재상·핵심 가치·사업 방향을 단순 나열하지 말고, 지원자의 경험과 연결하여 '왜 이 회사인가'를 설득력 있게 녹여낼 것\n"
+        f"※ '이 회사만의 차별점'과 '강조 키워드'는 반드시 자소서 본문에 한 번 이상 반영할 것\n"
+        f"{company_context}"
         if company_context else ""
     )
     match_section = (
-        f"\n\n[지원자 경험 매칭 분석 — 이 회사에 강조할 경험과 방향성]\n{experience_match}"
+        f"\n\n[지원자 경험 매칭 분석 — 이 회사에 강조할 경험과 방향성]\n"
+        f"※ 아래 분석에서 선별된 경험·소재를 이 문항의 근거로 반드시 활용할 것\n"
+        f"{experience_match}"
         if experience_match else ""
     )
     style_section = (
@@ -201,15 +215,20 @@ def build_prompt(
     if rag_context:
         if is_freeform:
             rag_section = (
-                f"\n\n[합격 자소서 구성 참고 — 자유형식 작성 가이드]\n"
-                f"아래 합격 사례들을 분석하여 서론-본론-결론 흐름, 단락 구성 방식, 마무리 패턴을 파악하고 동일한 구조로 작성할 것.\n"
-                f"· 서론: 첫 문장에서 자신을 어떻게 정의하는지 (핵심 역량 선언 / 경험 에피소드 시작 / 문제 제기)\n"
-                f"· 본론: 경험을 어떻게 구체화하는지 (사건→행동→결과, 수치 활용, 소제목 방식)\n"
-                f"· 결론: 지원 동기·입사 후 기여를 어떻게 연결하는지\n\n"
+                f"\n\n[합격 자소서 사례 — 아래 3가지를 추출하여 반드시 적용할 것]\n"
+                f"① 서론 패턴: 첫 문장에서 지원자를 어떻게 정의하는지 (역량 선언 / 에피소드 시작 / 문제 제기) → 동일한 방식으로 시작\n"
+                f"② 경험 서술 밀도: 사건→행동→결과 흐름에서 수치·구체성을 어느 수준으로 쓰는지 → 동일한 밀도 유지\n"
+                f"③ 마무리 연결: 지원 동기와 입사 후 기여를 어떻게 연결하는지 → 같은 구조로 마무리\n\n"
                 f"{rag_context}"
             )
         else:
-            rag_section = f"\n\n[유사 합격 자소서 사례 — 구조·완성도 참고]\n{rag_context}"
+            rag_section = (
+                f"\n\n[유사 합격 자소서 사례 — 아래 3가지를 추출하여 반드시 적용할 것]\n"
+                f"① 문장 밀도·호흡: 합격 답변이 한 문장에 얼마나 많은 정보를 담는지, 단문/장문 비율 → 동일하게 따를 것\n"
+                f"② STAR 구체성 수준: S·A·R 각각을 몇 문장으로 쓰는지, 수치를 어떻게 제시하는지 → 동일한 수준으로 작성\n"
+                f"③ 직무 연결 방식: 경험과 이 직무를 어떻게 연결하는지 → 같은 논리 구조 적용\n\n"
+                f"{rag_context}"
+            )
     else:
         rag_section = ""
 
@@ -238,7 +257,17 @@ def build_prompt(
 
     # 글자 수 제한: 사용자 지정값 우선, 없으면 기본값
     if char_limit:
-        word_count = f"{char_limit} (회사 지정 글자 수 제한 — 반드시 이 범위 안에서 작성할 것. 초과 절대 금지)"
+        import re as _re2
+        _nums = [int(n) for n in _re2.findall(r'\d+', char_limit)]
+        _max_c = max(_nums) if _nums else 0
+        _min_c = min(_nums) if len(_nums) >= 2 else 0
+        _range_str = f"{_min_c}자 이상 {_max_c}자 이하" if _min_c else f"{_max_c}자 이하"
+        word_count = (
+            f"【글자 수 엄수】{char_limit} → 최대 {_max_c}자 절대 초과 금지\n"
+            f"  ※ 한글 1글자·영문 1글자·숫자 1글자·띄어쓰기 모두 각 1자로 계산\n"
+            f"  ※ 작성 전 분량 계획: {_range_str} 범위에 맞춰 단락별 글자 수를 미리 배분할 것\n"
+            f"  ※ 최종 출력 전 글자 수를 반드시 재확인하고, {_max_c}자를 넘으면 압축 후 출력"
+        )
     elif is_freeform:
         word_count = "전체 900~1200자 (단락 합산 기준. 절대 초과 금지)"
     else:
@@ -291,11 +320,12 @@ def build_prompt(
 [채용 공고]
 {job_text}{company_section}{match_section}{question_guidance_section}{style_section}{prev_section}{draft_section}{already_written_section}{rag_section}
 
-━━━ 합격 자소서의 3가지 기준 ━━━
-이 답변은 아래 3가지를 반드시 충족해야 합니다:
+━━━ 합격 자소서의 4가지 기준 ━━━
+이 답변은 아래 4가지를 반드시 충족해야 합니다:
 ① 구체성: 모든 주장에 실제 사건·수치·결과가 뒷받침됨. "열심히 했다" → "N개월 동안 N건을 직접 처리해 N% 향상"
 ② 차별성: {company}의 {position}에 지원하는 이 사람만 쓸 수 있는 내용. 업무·경험·관점이 구체적으로 드러남
-③ 진정성: 프로필에 실제 있는 경험만 사용. 없는 사실 창작 금지
+③ 회사 맞춤: {company}의 인재상·핵심 가치·사업 방향이 지원자의 경험과 연결된 형태로 본문에 녹아 있어야 함. "왜 {company}인가"에 대한 답이 자소서에서 느껴져야 함
+④ 진정성: 프로필에 실제 있는 경험만 사용. 없는 사실 창작 금지
 
 ━━━ 작성 구조 ({word_count}) ━━━
 {structure_guide}
@@ -305,6 +335,7 @@ def build_prompt(
 • "열정", "도전", "성장", "기여", "시너지"를 구체성 없는 추상 결론으로 사용
 • 매 문단 "~을 통해 성장했습니다" / "~하는 인재가 되겠습니다" 식 마무리 반복
 • 어느 지원자나 쓸 수 있는 범용 표현 ("신뢰 기반", "소통 역량", "적극적 자세", "끊임없이 노력")
+• {company} 회사 정보를 단순 나열하거나 홍보하듯 쓰는 것 (경험과 연결 없는 "귀사는 ~합니다" 식 서술)
 • 이미 작성된 다른 문항에서 사용한 경험·에피소드 재사용{no_style_note_section}
 {draft_priority_section}
 답변 본문만 출력하세요. 제목·설명·메타 코멘트 없이 자소서 내용만 작성하세요."""
@@ -334,7 +365,7 @@ async def stream_cover_letter(
     # ── 1단계: 회사 컨텍스트 수집 및 요약 ──────────────────────────
     yield f"data: {json.dumps({'type': 'stage', 'stage': 1, 'message': '회사 정보 분석 중...'}, ensure_ascii=False)}\n\n"
 
-    raw_research = research_company(company) if company else ""
+    raw_research = research_company(company, job_posting.get("position", "")) if company else ""
     company_context = synthesize_company_context(company, job_posting, raw_research) if company else ""
 
     # ── 2단계: 사용자 경험 매칭 ────────────────────────────────────
@@ -443,7 +474,33 @@ async def stream_cover_letter(
                     answer_buffer.append(text)
                     yield f"data: {json.dumps({'type': 'text', 'index': i, 'content': text}, ensure_ascii=False)}\n\n"
 
-            already_written.append({"question": question, "answer": "".join(answer_buffer)})
+            full_answer = "".join(answer_buffer)
+
+            # 글자 수 초과 시 자동 보정
+            if char_limit:
+                import re as _re
+                nums = [int(n) for n in _re.findall(r'\d+', char_limit)]
+                if nums:
+                    max_chars = max(nums)
+                    actual_chars = len(full_answer)
+                    if actual_chars > max_chars:
+                        correction_prompt = (
+                            f"다음 자소서 답변이 {actual_chars}자입니다. 글자 수 제한은 {char_limit}이므로 "
+                            f"반드시 {max_chars}자 이내로 압축해주세요.\n"
+                            f"핵심 경험·근거는 유지하되, 덜 중요한 수식어·반복 표현을 줄이세요.\n"
+                            f"※ 한글·영문·숫자·띄어쓰기 모두 1자씩 계산\n\n"
+                            f"[원본]\n{full_answer}\n\n"
+                            f"{max_chars}자 이내의 압축된 답변만 출력하세요."
+                        )
+                        correction_response = claude.messages.create(
+                            model="claude-sonnet-4-6",
+                            max_tokens=max(600, int(max_chars * 1.8)),
+                            messages=[{"role": "user", "content": correction_prompt}]
+                        )
+                        full_answer = correction_response.content[0].text.strip()
+                        yield f"data: {json.dumps({'type': 'correction', 'index': i, 'content': full_answer}, ensure_ascii=False)}\n\n"
+
+            already_written.append({"question": question, "answer": full_answer})
             yield f"data: {json.dumps({'type': 'question_end', 'index': i}, ensure_ascii=False)}\n\n"
 
         yield "data: {\"type\": \"done\"}\n\n"

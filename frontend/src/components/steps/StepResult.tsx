@@ -121,6 +121,15 @@ export default function StepResult({ jobPosting, profile, prevCoverLetter, refLe
               resultsRef.current = next;
               return next;
             });
+          } else if (event.type === "correction") {
+            // 글자 수 초과로 백엔드에서 압축한 최종 텍스트로 교체
+            setResults((prev) => {
+              const next = prev.map((r, i) =>
+                i === event.index ? { ...r, answer: event.content } : r
+              );
+              resultsRef.current = next;
+              return next;
+            });
           } else if (event.type === "question_end") {
             setResults((prev) => {
               const next = prev.map((r, i) => (i === event.index ? { ...r, done: true } : r));
