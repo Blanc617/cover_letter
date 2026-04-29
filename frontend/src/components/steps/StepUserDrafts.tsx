@@ -7,6 +7,8 @@ export type UserDraft = {
   question: string;
   draft: string;
   char_limit?: string; // 예: "500자 이내" | "300~500자" | ""
+  min_chars?: number | null;
+  max_chars?: number | null;
 };
 
 type Mode = "freeform" | "questions";
@@ -129,6 +131,8 @@ export default function StepUserDrafts({ initialQuestions = [], onBack, onComple
         question: q.trim(),
         draft: drafts[i].trim(),
         char_limit: buildCharLimit(i),
+        min_chars: charMins[i]?.trim() ? Number(charMins[i]) : null,
+        max_chars: charMaxes[i]?.trim() ? Number(charMaxes[i]) : null,
       }))
       .filter((item) => item.question.length > 0);
     onComplete(result);

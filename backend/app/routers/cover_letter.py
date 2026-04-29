@@ -37,6 +37,27 @@ class GenerateRequest(BaseModel):
     user_drafts: list[dict] | None = None  # [{"question": "...", "draft": "..."}]
 
 
+def get_item_char_limit(item: dict) -> str:
+    min_chars = item.get("min_chars")
+    max_chars = item.get("max_chars")
+    try:
+        min_chars = int(min_chars) if min_chars not in (None, "") else None
+    except (TypeError, ValueError):
+        min_chars = None
+    try:
+        max_chars = int(max_chars) if max_chars not in (None, "") else None
+    except (TypeError, ValueError):
+        max_chars = None
+
+    if min_chars is not None and max_chars is not None:
+        return f"{min_chars}~{max_chars}자"
+    if max_chars is not None:
+        return f"{max_chars}자 이내"
+    if min_chars is not None:
+        return f"{min_chars}자 이상"
+    return (item.get("char_limit") or "").strip()
+
+
 def parse_char_limit(char_limit: str) -> tuple[int | None, int | None]:
     """Return (min_chars, max_chars) parsed from UI text such as 300~500."""
     import re
@@ -78,6 +99,86 @@ def char_limit_status(text: str, min_chars: int | None, max_chars: int | None) -
     if max_chars is not None and count > max_chars:
         return False, count
     return True, count
+
+
+def char_limit_label(min_chars: int | None, max_chars: int | None) -> str:
+    if min_chars is not None and max_chars is not None:
+        return f"{min_chars}자 이상 {max_chars}자 이하"
+    if max_chars is not None:
+        return f"{max_chars}자 이하"
+    if min_chars is not None:
+        return f"{min_chars}자 이상"
+    return "제한 없음"
+
+
+def build_char_limit_instruction(min_chars: int | None, max_chars: int | None) -> str:
+    if min_chars is None and max_chars is None:
+        return ""
+    label = char_limit_label(min_chars, max_chars)
+    return (
+        "\n\n[MANDATORY CHARACTER LIMIT]\n"
+        f"- Final answer length must be {label}.\n"
+        "- Count every Korean character, English letter, number, space, and newline as 1 character.\n"
+        "- Do not exceed the maximum under any circumstance.\n"
+        "- If the draft is too long, remove secondary details and keep the strongest evidence.\n"
+        "- Output only the finished cover-letter answer body."
+    )
+
+
+def final_char_limit_fallback(text: str, max_chars: int, min_chars: int | None = None) -> str:
+    """Deterministic last guard: never return text longer than max_chars."""
+    text = (text or "").strip()
+    if answer_char_count(text) <= max_chars:
+        return text
+    trimmed = text[:max_chars].rstrip()
+    for sep in ["\n\n", "\n", ". ", "다. ", "요. ", "니다. "]:
+        idx = trimmed.rfind(sep)
+        if idx >= max(0, int(max_chars * 0.75)):
+            end = idx + len(sep)
+            candidate = trimmed[:end].strip()
+            if min_chars is None or answer_char_count(candidate) >= min_chars:
+                return candidate
+    return trimmed
+
+
+def is_company_motivation_question(question: str, index: int | None = None) -> bool:
+    q = (question or "").replace(" ", "").lower()
+    keywords = [
+        "지원동기", "지원하게된동기", "지원하게된이유", "지원한동기", "지원이유",
+        "왜우리회사", "왜당사", "왜이회사", "당사에지원", "회사에지원",
+        "입사후", "포부", "회사선택", "선택한이유", "관심을가지게",
+        "why", "motivation", "reasonforapplying",
+    ]
+    if any(k in q for k in keywords):
+        return True
+    return index == 0 and any(k in q for k in ["회사", "기업", "당사", "입사", "지원"])
+
+
+def build_question_strategy(
+    question: str,
+    company: str,
+    position: str,
+    index: int,
+    is_motivation: bool,
+) -> str:
+    if is_motivation:
+        return f"""
+
+[문항 전략 — 지원동기/회사 이해 중심]
+- 이 문항은 경험 자랑이 아니라 "왜 {company}인가"와 "왜 {position}인가"를 설득하는 답변이다.
+- 첫 문단 이후에도 회사의 사업 방향, 일하는 방식, 직무 과제와 연결된 내용이 계속 살아 있어야 한다.
+- 이력서·포트폴리오의 프로젝트는 최대 1개만 짧게 사용한다. 프로젝트 설명이 본문 절반을 넘으면 실패다.
+- 구조: ① {company}를 선택한 구체적 이유 → ② 그 이유와 맞닿은 지원자의 관점/경험 1개 → ③ 입사 후 기여 방향.
+- 회사 정보는 홍보 문구처럼 나열하지 말고, 지원자가 그 지점에 끌린 이유와 직무 기여 방식으로 연결한다.
+"""
+    return f"""
+
+[문항 전략 — 소재 중복 방지]
+- 이 문항에서는 하나의 핵심 경험 또는 프로젝트만 깊게 사용한다.
+- 이력서·포트폴리오에 있는 여러 프로젝트를 나열하지 않는다.
+- 다른 문항에서 이미 쓴 경험, 프로젝트명, 성과, 표현은 반복하지 않는다.
+- 문항 {index + 1}의 질문 의도에 직접 답하는 내용만 남기고, 관련 낮은 프로젝트 설명은 과감히 제외한다.
+"""
 
 
 import time as _time
@@ -297,6 +398,7 @@ def build_prompt(
     job_posting: dict,
     profile: dict,
     question: str,
+    question_index: int,
     company_context: str,
     experience_match: str,
     rag_context: str,
@@ -333,6 +435,10 @@ def build_prompt(
 
     company = job_posting.get('company', '')
     position = job_posting.get('position', '')
+    is_motivation = is_company_motivation_question(question, question_index)
+    question_strategy_section = build_question_strategy(
+        question, company, position, question_index, is_motivation
+    )
 
     company_section = (
         f"\n\n[회사 분석 — 반드시 아래 내용을 자소서에 구체적으로 반영할 것]\n"
@@ -343,7 +449,7 @@ def build_prompt(
     )
     match_section = (
         f"\n\n[지원자 경험 매칭 분석 — 이 회사에 강조할 경험과 방향성]\n"
-        f"※ 아래 분석에서 선별된 경험·소재를 이 문항의 근거로 반드시 활용할 것\n"
+        f"※ 아래 분석은 소재 후보입니다. 이 문항에는 질문 의도에 맞는 핵심 소재 1개만 선별해서 사용할 것\n"
         f"{experience_match}"
         if experience_match else ""
     )
@@ -420,7 +526,13 @@ def build_prompt(
         if _max_c and _max_c <= 300:
             _p1 = int(_max_c * 0.35)
             _p2 = _max_c - _p1
-            structure_guide = f"""【단락별 글자 수 예산 — 합산 {_max_c}자 이내】
+            if is_motivation:
+                structure_guide = f"""【단락별 글자 수 예산 — 합산 {_max_c}자 이내】
+단락 1 (약 {_p1}자): {company}를 선택한 구체적 이유와 직무 관심을 두괄식으로 제시
+단락 2 (약 {_p2}자): 회사 방향과 맞닿은 지원자 경험 1개만 짧게 연결 + 입사 후 기여 방향
+※ 프로젝트 상세 설명을 길게 쓰지 말고, 회사 선택 이유가 본문의 중심이 되게 할 것"""
+            else:
+                structure_guide = f"""【단락별 글자 수 예산 — 합산 {_max_c}자 이내】
 단락 1 (약 {_p1}자): 핵심 답변 두괄식 + 대표 경험 1줄 요약
 단락 2 (약 {_p2}자): 구체적 경험 STAR 압축형 서술 + 직무 연결 마무리
 ※ 마지막 문장은 완성된 형태로 자연스럽게 끝낼 것"""
@@ -428,7 +540,17 @@ def build_prompt(
             _p1 = int(_max_c * 0.20) if _max_c else 0
             _p2 = int(_max_c * 0.55) if _max_c else 0
             _p3 = (_max_c - _p1 - _p2) if _max_c else 0
-            structure_guide = f"""【단락별 글자 수 예산 — 합산 {_max_c}자 이내】
+            if is_motivation:
+                _p1 = int(_max_c * 0.35) if _max_c else 0
+                _p2 = int(_max_c * 0.40) if _max_c else 0
+                _p3 = (_max_c - _p1 - _p2) if _max_c else 0
+                structure_guide = f"""【단락별 글자 수 예산 — 합산 {_max_c}자 이내】
+단락 1 (약 {_p1}자): {company}를 선택한 이유. 회사의 사업 방향/문화/직무 과제 중 1~2개를 지원자 관점으로 해석
+단락 2 (약 {_p2}자): 그 이유와 연결되는 지원자 경험 1개만 근거로 제시. 프로젝트 상세 기능 나열 금지
+단락 3 (약 {_p3}자): {position}에서 입사 후 기여할 구체적 방식. 회사 맥락으로 마무리
+※ 첫 줄만 지원동기이고 나머지가 프로젝트 설명이면 실패다. 모든 단락이 {company}와 연결되어야 한다."""
+            else:
+                structure_guide = f"""【단락별 글자 수 예산 — 합산 {_max_c}자 이내】
 단락 1 (약 {_p1}자): 이 문항의 핵심 답변 두괄식 제시
 단락 2 (약 {_p2}자): 핵심 근거 경험을 STAR 구조로 전개
   S(상황): 어떤 상황/과제였는지
@@ -445,7 +567,13 @@ def build_prompt(
 단락 3 (200~300자): 두 번째 경험·역량을 간결하게 서술 (STAR 압축형)
 단락 4 (150~200자): 이 회사를 선택한 구체적 이유 + 입사 후 첫 1년 기여 방향"""
     else:
-        structure_guide = """단락 1 (150~200자): 이 문항의 핵심 답변 먼저 제시 (두괄식). 관련성 가장 높은 경험·역량을 한 줄로 선언
+        if is_motivation:
+            structure_guide = f"""단락 1 (250~320자): {company}를 선택한 구체적 이유. 회사의 방향/문화/직무 과제를 지원자 관점으로 해석
+단락 2 (300~380자): 그 이유와 연결되는 지원자 경험 1개만 근거로 제시. 프로젝트 기능·구현 설명 나열 금지
+단락 3 (180~260자): {position}에서 입사 후 어떻게 기여할지 회사 맥락으로 마무리
+※ 첫 줄 외에는 프로젝트 설명만 반복하는 답변은 실패다. 회사 선택 이유와 직무 기여가 본문의 중심이어야 한다."""
+        else:
+            structure_guide = """단락 1 (150~200자): 이 문항의 핵심 답변 먼저 제시 (두괄식). 관련성 가장 높은 경험·역량을 한 줄로 선언
 단락 2 (350~450자): 핵심 근거 경험 1개를 STAR 구조로 전개
   S(상황): 어떤 상황/과제/문제였는지 (1~2문장)
   A(행동): 지원자가 구체적으로 취한 행동, 수치 포함 (2~3문장)
@@ -460,6 +588,10 @@ def build_prompt(
         f"\n[최우선 반영 — 지원자 초안]\n초안의 경험·사건·판단은 그대로 유지하고 완성도와 구체성만 높일 것:\n{user_draft}\n"
         if user_draft else ""
     )
+    strict_char_instruction = ""
+    if char_limit:
+        min_chars, max_chars = parse_char_limit(char_limit)
+        strict_char_instruction = build_char_limit_instruction(min_chars, max_chars)
 
     return f"""당신은 대한민국 대기업 서류전형 합격 자소서를 전문으로 쓰는 작가입니다.
 
@@ -471,7 +603,7 @@ def build_prompt(
 {profile_text}
 
 [채용 공고]
-{job_text}{company_section}{match_section}{question_guidance_section}{style_section}{prev_section}{draft_section}{already_written_section}{rag_section}
+{job_text}{company_section}{match_section}{question_guidance_section}{question_strategy_section}{style_section}{prev_section}{draft_section}{already_written_section}{rag_section}
 
 ━━━ 합격 자소서의 4가지 기준 ━━━
 이 답변은 아래 4가지를 반드시 충족해야 합니다:
@@ -482,6 +614,7 @@ def build_prompt(
 
 ━━━ 작성 구조 ({word_count}) ━━━
 {structure_guide}
+{strict_char_instruction}
 
 ━━━ 절대 금지 ━━━
 • "이를 통해", "이러한 경험을 바탕으로", "뿐만 아니라"로만 시작하는 문장 반복
@@ -489,6 +622,7 @@ def build_prompt(
 • 매 문단 "~을 통해 성장했습니다" / "~하는 인재가 되겠습니다" 식 마무리 반복
 • 어느 지원자나 쓸 수 있는 범용 표현 ("신뢰 기반", "소통 역량", "적극적 자세", "끊임없이 노력")
 • {company} 회사 정보를 단순 나열하거나 홍보하듯 쓰는 것 (경험과 연결 없는 "귀사는 ~합니다" 식 서술)
+• 이력서·포트폴리오의 프로젝트 내용을 여러 개 반복하거나, 문항 의도보다 프로젝트 설명을 더 길게 쓰는 것
 • 이미 작성된 다른 문항에서 사용한 경험·에피소드 재사용{no_style_note_section}
 {draft_priority_section}
 답변 본문만 출력하세요. 제목·설명·메타 코멘트 없이 자소서 내용만 작성하세요."""
@@ -568,7 +702,7 @@ async def stream_cover_letter(
             for item in user_drafts:
                 q = item.get("question", "").strip()
                 d = item.get("draft", "").strip()
-                cl = item.get("char_limit", "").strip()
+                cl = get_item_char_limit(item)
                 if q:
                     draft_map[q] = d
                     if cl:
@@ -584,7 +718,7 @@ async def stream_cover_letter(
             for item in user_drafts:
                 q = item.get("question", "").strip()
                 d = item.get("draft", "").strip()
-                cl = item.get("char_limit", "").strip()
+                cl = get_item_char_limit(item)
                 if q and d:
                     draft_map[q] = d
                 if q and cl:
@@ -602,7 +736,7 @@ async def stream_cover_letter(
             question_guidance = question_guidance_map.get(question, "")
             char_limit = draft_map_char_limit.get(question, "")
             prompt = build_prompt(
-                job_posting, profile, question,
+                job_posting, profile, question, i,
                 company_context, experience_match,
                 rag_context, prev_cover_letter,
                 user_style_context,
@@ -614,12 +748,11 @@ async def stream_cover_letter(
                 char_limit,
             )
 
-            # 글자 수 제한이 있으면 해당 분량에 맞게 토큰 조정 (한국어 1자 ≈ 1.5토큰)
+            # 글자 수 제한이 있으면 서버에서 검증한 최종본만 클라이언트에 보낸다.
             min_chars, max_chars = parse_char_limit(char_limit)
             if char_limit:
                 target_chars = max_chars or min_chars or 1000
-                # 1.8x: min_chars까지 충분히 쓸 수 있도록 여유 확보
-                max_tokens = max(600, int(target_chars * 1.8))
+                max_tokens = max(500, int(target_chars * 1.25))
             else:
                 max_tokens = 1600 if is_freeform else 1700
             answer_buffer = []
@@ -630,14 +763,15 @@ async def stream_cover_letter(
             ) as stream:
                 for text in stream.text_stream:
                     answer_buffer.append(text)
-                    yield f"data: {json.dumps({'type': 'text', 'index': i, 'content': text}, ensure_ascii=False)}\n\n"
+                    if not char_limit:
+                        yield f"data: {json.dumps({'type': 'text', 'index': i, 'content': text}, ensure_ascii=False)}\n\n"
 
             full_answer = "".join(answer_buffer)
 
-            # ── 글자 수 보정: 최대 2회 완전 재작성 시도 후 하드컷 보장 ──
+            # ── 글자 수 보정: 최대 3회 완전 재작성 시도 후 하드컷 보장 ──
             if char_limit and max_chars is not None:
-                range_str = f"{min_chars}자 이상 {max_chars}자 이하" if min_chars else f"{max_chars}자 이하"
-                for attempt in range(2):
+                range_str = char_limit_label(min_chars, max_chars)
+                for attempt in range(3):
                     actual = answer_char_count(full_answer)
                     if actual <= max_chars and (min_chars is None or actual >= min_chars):
                         break
@@ -650,24 +784,26 @@ async def stream_cover_letter(
                         f"글자 수 제한 [{range_str}]에 맞게 처음부터 완성도 있게 다시 작성해주세요.\n\n"
                         f"【작성 규칙】\n"
                         f"① 글자 수: 한글·영문·숫자·띄어쓰기·줄바꿈 모두 각 1자, 합산 {range_str}\n"
-                        f"② 핵심 경험·수치·근거는 반드시 유지할 것\n"
-                        f"③ 3단락 구조(두괄식 → STAR 경험 → 직무 연결)로 완성도 있게 마무리\n"
+                        f"② 최대 글자 수를 넘길 위험이 있으면 보조 설명보다 핵심 경험·수치·근거를 우선할 것\n"
+                        f"③ 최소 글자 수를 채우되, 최대 글자 수는 어떤 경우에도 넘기지 말 것\n"
                         f"④ 마지막 문장은 반드시 완성된 문장으로 자연스럽게 끝낼 것\n"
                         f"⑤ 답변 본문만 출력, 제목·설명·메타 코멘트 없이\n\n"
                         f"[원본 답변 — 경험·사실은 유지하되 분량을 조정하여 재작성]\n{full_answer}"
                     )
                     resp = claude.messages.create(
                         model="claude-sonnet-4-6",
-                        max_tokens=max(600, int(max_chars * 1.8)),
+                        max_tokens=max(500, int(max_chars * 1.25)),
                         messages=[{"role": "user", "content": correction_prompt}]
                     )
                     full_answer = resp.content[0].text.strip()
-                    yield f"data: {json.dumps({'type': 'correction', 'index': i, 'content': full_answer}, ensure_ascii=False)}\n\n"
 
-                # 하드컷: 재작성 2회 후에도 초과하면 문장 경계에서 잘라냄 (최후 보루)
+                # 하드컷: 재작성 후에도 초과하면 서버에서 반드시 최대 글자 수 이내로 만든다.
                 if answer_char_count(full_answer) > max_chars:
-                    full_answer = trim_to_max_chars(full_answer, max_chars, min_chars)
-                    yield f"data: {json.dumps({'type': 'correction', 'index': i, 'content': full_answer}, ensure_ascii=False)}\n\n"
+                    full_answer = final_char_limit_fallback(full_answer, max_chars, min_chars)
+
+                yield f"data: {json.dumps({'type': 'text', 'index': i, 'content': full_answer}, ensure_ascii=False)}\n\n"
+            elif char_limit:
+                yield f"data: {json.dumps({'type': 'text', 'index': i, 'content': full_answer}, ensure_ascii=False)}\n\n"
 
             already_written.append({"question": question, "answer": full_answer})
             yield f"data: {json.dumps({'type': 'question_end', 'index': i}, ensure_ascii=False)}\n\n"
