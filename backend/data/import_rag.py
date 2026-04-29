@@ -32,8 +32,8 @@ def get_embedding(text: str) -> list[float]:
 
 
 def embed_text(company: str, position: str, question: str, answer: str) -> list[float]:
-    """검색 품질을 위해 문항+답변을 합쳐서 임베딩"""
-    combined = f"회사: {company}\n직군: {position}\n문항: {question}\n답변: {answer}"
+    """검색 쿼리와 동일한 구조(회사+직군+문항)로 임베딩 — 답변 제외로 검색 정확도 향상"""
+    combined = f"회사: {company}\n직군: {position}\n문항: {question}"
     return get_embedding(combined)
 
 
@@ -65,9 +65,9 @@ def import_csv(csv_path: str):
             print(f"[{i}/{len(rows)}] {company} / {position} - 임베딩 생성 중...")
             embedding = embed_text(company, position, question, answer)
 
-            supabase.table("rag_cover_letters").insert({
+            supabase.table("rag_documents").insert({
                 "company":   company,
-                "job_field": position,
+                "position":  position,
                 "question":  question,
                 "answer":    answer,
                 "embedding": embedding

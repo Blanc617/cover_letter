@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from sentence_transformers import SentenceTransformer
 from supabase import create_client
 from app.config import settings
-from app.dependencies import get_current_user
+from app.dependencies import get_admin_user
 
 router = APIRouter()
 supabase = create_client(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_ROLE_KEY)
@@ -39,7 +39,7 @@ def generate_embedding(company: str, position: str, question: str, answer: str) 
 
 
 @router.post("/rag", status_code=201)
-async def create_rag_document(body: RagDocumentCreate, _: str = Depends(get_current_user)):
+async def create_rag_document(body: RagDocumentCreate, _: str = Depends(get_admin_user)):
     """합격 자소서 등록"""
     embedding = generate_embedding(body.company, body.position, body.question, body.answer)
 
@@ -69,7 +69,7 @@ async def list_rag_documents(company: str = "", position: str = "", limit: int =
 
 
 @router.put("/rag/{doc_id}")
-async def update_rag_document(doc_id: int, body: RagDocumentUpdate, _: str = Depends(get_current_user)):
+async def update_rag_document(doc_id: int, body: RagDocumentUpdate, _: str = Depends(get_admin_user)):
     """합격 자소서 수정"""
     existing = supabase.table("rag_documents").select("*").eq("id", doc_id).execute()
     if not existing.data:
@@ -91,7 +91,7 @@ async def update_rag_document(doc_id: int, body: RagDocumentUpdate, _: str = Dep
 
 
 @router.delete("/rag/{doc_id}", status_code=204)
-async def delete_rag_document(doc_id: int, _: str = Depends(get_current_user)):
+async def delete_rag_document(doc_id: int, _: str = Depends(get_admin_user)):
     """합격 자소서 삭제"""
     existing = supabase.table("rag_documents").select("id").eq("id", doc_id).execute()
     if not existing.data:
@@ -101,7 +101,7 @@ async def delete_rag_document(doc_id: int, _: str = Depends(get_current_user)):
 
 
 @router.post("/rag/reembed-all")
-async def reembed_all_rag_documents(_: str = Depends(get_current_user)):
+async def reembed_all_rag_documents(_: str = Depends(get_admin_user)):
     """기존 RAG 데이터 전체 재임베딩 (임베딩 방식 변경 시 실행)"""
     result = supabase.table("rag_documents").select("id, company, position, question, answer").execute()
     docs = result.data or []

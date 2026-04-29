@@ -190,6 +190,7 @@ export default function GeneratePage() {
                 transition={{ duration: 0.3 }}
               >
                 <StepUserDrafts
+                  initialQuestions={jobPosting?.questions ?? []}
                   onBack={goPrev}
                   onComplete={(drafts) => { setUserDrafts(drafts); goNext(); }}
                 />

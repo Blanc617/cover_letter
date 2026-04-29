@@ -2,14 +2,14 @@
 
 import { useState, useCallback } from "react";
 import { useDropzone } from "react-dropzone";
-import { Upload, ImageIcon, Loader2, CheckCircle2, ChevronRight, Plus, Trash2 } from "lucide-react";
+import { Upload, ImageIcon, Loader2, CheckCircle2, ChevronRight, Plus, Trash2, Link } from "lucide-react";
 import type { JobPosting } from "@/app/generate/page";
 
 interface Props {
   onComplete: (data: JobPosting) => void;
 }
 
-type Mode = "image" | "manual";
+type Mode = "image" | "url" | "manual";
 
 const EMPTY_FORM: JobPosting = {
   company: "",
@@ -31,6 +31,11 @@ export default function StepJobPosting({ onComplete }: Props) {
   const [result, setResult] = useState<JobPosting | null>(null);
   const [editResult, setEditResult] = useState<JobPosting | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // ── URL 모드 상태 ─────────────────────────────────────────────
+  const [urlInput, setUrlInput] = useState("");
+  const [urlLoading, setUrlLoading] = useState(false);
+  const [urlError, setUrlError] = useState<string | null>(null);
 
   // ── 직접 입력 모드 상태 ───────────────────────────────────────
   const [form, setForm] = useState<JobPosting>(EMPTY_FORM);
@@ -74,6 +79,31 @@ export default function StepJobPosting({ onComplete }: Props) {
     }
   };
 
+  // ── URL 모드 핸들러 ───────────────────────────────────────────
+  const analyzeUrl = async () => {
+    if (!urlInput.trim()) return;
+    setUrlLoading(true);
+    setUrlError(null);
+    try {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"}/api/job-posting/from-url`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: urlInput.trim() }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail ?? "분석에 실패했습니다.");
+      }
+      const data = await res.json();
+      setResult(data);
+      setEditResult({ ...data, requirements: data.requirements.length ? data.requirements : [""], preferred: data.preferred.length ? data.preferred : [""] });
+    } catch (e: unknown) {
+      setUrlError(e instanceof Error ? e.message : "오류가 발생했습니다.");
+    } finally {
+      setUrlLoading(false);
+    }
+  };
+
   // ── 직접 입력 모드 핸들러 ─────────────────────────────────────
   const setField = (key: keyof JobPosting, value: string) => {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -110,7 +140,7 @@ export default function StepJobPosting({ onComplete }: Props) {
       ...form,
       requirements: validReqs,
       preferred: form.preferred.filter((p) => p.trim()),
-      questions: [],
+      questions: form.questions.filter((q) => q.trim()),
     });
   };
 
@@ -130,17 +160,17 @@ export default function StepJobPosting({ onComplete }: Props) {
         className="flex rounded-xl p-1 gap-1"
         style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}
       >
-        {(["image", "manual"] as Mode[]).map((m) => (
+        {(["image", "url", "manual"] as Mode[]).map((m) => (
           <button
             key={m}
-            onClick={() => setMode(m)}
+            onClick={() => { setMode(m); setResult(null); setEditResult(null); setError(null); setUrlError(null); }}
             className="flex-1 py-2 rounded-lg text-sm font-medium transition-all duration-200"
             style={{
               background: mode === m ? "var(--accent)" : "transparent",
               color: mode === m ? "var(--bg)" : "var(--text-muted)",
             }}
           >
-            {m === "image" ? "이미지 업로드" : "직접 입력"}
+            {m === "image" ? "이미지 업로드" : m === "url" ? "URL 입력" : "직접 입력"}
           </button>
         ))}
       </div>
@@ -188,8 +218,47 @@ export default function StepJobPosting({ onComplete }: Props) {
           )}
 
           {error && <p className="text-sm text-center" style={{ color: "var(--error)" }}>{error}</p>}
+        </>
+      )}
 
-          {result && editResult && (
+      {/* ── URL 모드 ───────────────────────────────────────────── */}
+      {mode === "url" && !result && (
+        <div className="space-y-3">
+          <div
+            className="rounded-2xl p-5 space-y-3"
+            style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}
+          >
+            <div className="flex items-center gap-2 mb-1">
+              <Link size={14} style={{ color: "var(--accent)" }} />
+              <span className="text-sm font-medium" style={{ color: "var(--text)" }}>채용 공고 URL</span>
+            </div>
+            <input
+              type="url"
+              placeholder="https://www.saramin.co.kr/..."
+              value={urlInput}
+              onChange={(e) => setUrlInput(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && analyzeUrl()}
+              className="w-full px-4 py-3 rounded-xl text-sm outline-none"
+              style={{ background: "var(--bg)", border: "1.5px solid var(--border)", color: "var(--text)" }}
+            />
+            <p className="text-xs" style={{ color: "var(--text-dim)" }}>
+              사람인, 잡코리아, 링크드인, 회사 공식 채용 페이지 등 지원
+            </p>
+          </div>
+          {urlError && <p className="text-sm text-center" style={{ color: "var(--error)" }}>{urlError}</p>}
+          <button
+            onClick={analyzeUrl}
+            disabled={urlLoading || !urlInput.trim()}
+            className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl text-sm font-medium transition-all duration-200 disabled:opacity-50"
+            style={{ background: "var(--accent)", color: "var(--bg)" }}
+          >
+            {urlLoading ? <><Loader2 size={16} className="animate-spin" />공고 분석 중...</> : <><Upload size={16} />공고 분석하기</>}
+          </button>
+        </div>
+      )}
+
+      {/* ── 이미지/URL 분석 결과 공통 편집 UI ─────────────────── */}
+      {(mode === "image" || mode === "url") && result && editResult && (
             <div
               className="rounded-2xl p-5 space-y-4"
               style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}
@@ -253,16 +322,32 @@ export default function StepJobPosting({ onComplete }: Props) {
                 />
               </div>
 
+              {/* 자소서 문항 */}
+              <div>
+                <p className="text-xs mb-1.5" style={{ color: "var(--text-dim)" }}>자소서 문항 <span style={{ opacity: 0.6 }}>(선택)</span></p>
+                <ListInput
+                  items={editResult.questions.length > 0 ? editResult.questions : [""]}
+                  placeholder="예) 지원 동기와 입사 후 포부를 작성해주세요."
+                  multiline
+                  onChange={(i, v) => { const arr = [...(editResult.questions.length > 0 ? editResult.questions : [""])]; arr[i] = v; setEditResult({ ...editResult, questions: arr }); }}
+                  onAdd={() => setEditResult({ ...editResult, questions: [...(editResult.questions.length > 0 ? editResult.questions : [""]), ""] })}
+                  onRemove={(i) => { const arr = (editResult.questions.length > 0 ? editResult.questions : [""]).filter((_, idx) => idx !== i); setEditResult({ ...editResult, questions: arr }); }}
+                />
+              </div>
+
               <button
-                onClick={() => onComplete({ ...editResult, requirements: editResult.requirements.filter(r => r.trim()), preferred: editResult.preferred.filter(p => p.trim()), questions: [] })}
+                onClick={() => onComplete({
+                  ...editResult,
+                  requirements: editResult.requirements.filter(r => r.trim()),
+                  preferred: editResult.preferred.filter(p => p.trim()),
+                  questions: (editResult.questions ?? []).filter(q => q.trim()),
+                })}
                 className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl text-sm font-medium transition-all duration-200 hover:opacity-90"
                 style={{ background: "var(--accent)", color: "var(--bg)" }}
               >
                 다음 단계로 <ChevronRight size={16} />
               </button>
             </div>
-          )}
-        </>
       )}
 
       {/* ── 직접 입력 모드 ─────────────────────────────────────── */}

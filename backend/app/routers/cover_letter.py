@@ -37,40 +37,183 @@ class GenerateRequest(BaseModel):
     user_drafts: list[dict] | None = None  # [{"question": "...", "draft": "..."}]
 
 
+def parse_char_limit(char_limit: str) -> tuple[int | None, int | None]:
+    """Return (min_chars, max_chars) parsed from UI text such as 300~500."""
+    import re
+
+    nums = [int(n) for n in re.findall(r"\d+", char_limit or "")]
+    if not nums:
+        return None, None
+    if len(nums) == 1:
+        lowered = (char_limit or "").lower()
+        if "min" in lowered or "least" in lowered or "이상" in char_limit:
+            return nums[0], None
+        return None, nums[0]
+    return min(nums), max(nums)
+
+
+def answer_char_count(text: str) -> int:
+    """Match the frontend textarea counter closely: count visible string length."""
+    return len((text or "").strip())
+
+
+def trim_to_max_chars(text: str, max_chars: int, min_chars: int | None = None) -> str:
+    text = (text or "").strip()
+    if len(text) <= max_chars:
+        return text
+    trimmed = text[:max_chars].rstrip()
+    for sep in [". ", "\n", "다. ", "요. ", "니다. "]:
+        idx = trimmed.rfind(sep)
+        if idx >= max(0, int(max_chars * 0.65)):
+            candidate = trimmed[: idx + len(sep)].strip()
+            if min_chars is None or len(candidate) >= min_chars:
+                return candidate
+    return trimmed
+
+
+def char_limit_status(text: str, min_chars: int | None, max_chars: int | None) -> tuple[bool, int]:
+    count = answer_char_count(text)
+    if min_chars is not None and count < min_chars:
+        return False, count
+    if max_chars is not None and count > max_chars:
+        return False, count
+    return True, count
+
+
+import time as _time
+
+# DB 직군 목록 캐시 (5분)
+_job_field_cache: dict = {"fields": [], "ts": 0.0}
+_CACHE_TTL = 300
+
+# 직무명 정규화 결과 캐시 (프로세스 재시작 전까지 유지)
+_normalize_cache: dict[str, str] = {}
+
+
+def _get_rag_job_fields() -> list[str]:
+    """RAG DB에서 직군 카테고리 목록 조회 (5분 캐싱)"""
+    now = _time.time()
+    if now - _job_field_cache["ts"] < _CACHE_TTL and _job_field_cache["fields"]:
+        return _job_field_cache["fields"]
+    try:
+        result = supabase.table("rag_documents").select("position").execute()
+        seen: set[str] = set()
+        fields: list[str] = []
+        for row in (result.data or []):
+            p = (row.get("position") or "").strip()
+            if p and p not in seen:
+                seen.add(p)
+                fields.append(p)
+        _job_field_cache["fields"] = fields
+        _job_field_cache["ts"] = now
+        return fields
+    except Exception:
+        return []
+
+
+def _normalize_job_field(position: str) -> str:
+    """사용자 입력 직무명을 DB의 RAG 카테고리로 정규화.
+
+    1차: 부분 문자열 매칭
+    2차: Claude Haiku로 의미 분류
+    실패 시 원본 반환.
+    """
+    if not position:
+        return position
+    if position in _normalize_cache:
+        return _normalize_cache[position]
+
+    available = _get_rag_job_fields()
+    if not available:
+        _normalize_cache[position] = position
+        return position
+
+    # 1차: 단순 키워드 부분 매칭
+    pos_lower = position.lower().replace(" ", "")
+    for field in available:
+        field_lower = field.lower().replace(" ", "")
+        if field_lower in pos_lower or pos_lower in field_lower:
+            _normalize_cache[position] = field
+            return field
+
+    # 2차: Claude Haiku로 의미 기반 분류
+    try:
+        fields_str = ", ".join(available)
+        prompt = (
+            f"직무명 '{position}'을 아래 카테고리 중 가장 유사한 것 하나로만 답하세요.\n"
+            f"카테고리: {fields_str}\n"
+            f"정확히 카테고리 이름만 출력하세요. 해당 없으면 빈 문자열로 답하세요."
+        )
+        resp = claude.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=30,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        matched = resp.content[0].text.strip()
+        if matched in available:
+            _normalize_cache[position] = matched
+            return matched
+    except Exception:
+        pass
+
+    _normalize_cache[position] = position
+    return position
+
+
 def get_rag_context(company: str, job_field: str, question: str, is_freeform: bool = False) -> str:
     """Vector DB에서 유사 합격 자소서 검색
 
-    - 특정 질문: 1차 같은 회사+직군, 없으면 2차 같은 직군으로 fallback
+    - 특정 질문: 1차 같은 회사+직군, 2차 직군만, 3차 전체(벡터 유사도)
     - 자유형식: 직군 기반으로 구성 참고할 사례 5개
     """
+    # 사용자 입력 직무명을 RAG 카테고리로 정규화
+    normalized_field = _normalize_job_field(job_field)
+
     try:
         if is_freeform:
-            query = f"직군: {job_field} 자기소개서 경험 역량 성과 지원 동기"
+            query = f"직군: {normalized_field} 자기소개서 경험 역량 성과 지원 동기"
             embedding = embedding_model.encode(query).tolist()
             result = supabase.rpc("search_rag_cover_letters", {
                 "query_embedding": embedding,
                 "match_company": "",
-                "match_job_field": job_field,
+                "match_job_field": normalized_field,
                 "match_count": 5
             }).execute()
+            # fallback: 전체에서 벡터 유사도만으로 검색
+            if not result.data:
+                result = supabase.rpc("search_rag_cover_letters", {
+                    "query_embedding": embedding,
+                    "match_company": "",
+                    "match_job_field": "",
+                    "match_count": 5
+                }).execute()
         else:
-            query = f"회사: {company}\n직군: {job_field}\n문항: {question}"
+            query = f"회사: {company}\n직군: {normalized_field}\n문항: {question}"
             embedding = embedding_model.encode(query).tolist()
 
             # 1차: 같은 회사 + 직군으로 검색
             result = supabase.rpc("search_rag_cover_letters", {
                 "query_embedding": embedding,
                 "match_company": company,
-                "match_job_field": job_field,
+                "match_job_field": normalized_field,
                 "match_count": 3
             }).execute()
 
-            # 2차 fallback: 같은 회사 결과 없으면 직군만으로 재검색
+            # 2차 fallback: 직군만으로 재검색
             if not result.data:
                 result = supabase.rpc("search_rag_cover_letters", {
                     "query_embedding": embedding,
                     "match_company": "",
-                    "match_job_field": job_field,
+                    "match_job_field": normalized_field,
+                    "match_count": 3
+                }).execute()
+
+            # 3차 fallback: 직군 필터 없이 벡터 유사도만으로 검색
+            if not result.data:
+                result = supabase.rpc("search_rag_cover_letters", {
+                    "query_embedding": embedding,
+                    "match_company": "",
+                    "match_job_field": "",
                     "match_count": 3
                 }).execute()
 
@@ -263,26 +406,36 @@ def build_prompt(
         _min_c = min(_nums) if len(_nums) >= 2 else 0
         _range_str = f"{_min_c}자 이상 {_max_c}자 이하" if _min_c else f"{_max_c}자 이하"
         word_count = (
-            f"【글자 수 엄수】{char_limit} → 최대 {_max_c}자 절대 초과 금지\n"
-            f"  ※ 한글 1글자·영문 1글자·숫자 1글자·띄어쓰기 모두 각 1자로 계산\n"
-            f"  ※ 작성 전 분량 계획: {_range_str} 범위에 맞춰 단락별 글자 수를 미리 배분할 것\n"
-            f"  ※ 최종 출력 전 글자 수를 반드시 재확인하고, {_max_c}자를 넘으면 압축 후 출력"
+            f"【글자 수 엄수】{_range_str} (한글·영문·숫자·띄어쓰기·줄바꿈 모두 각 1자)\n"
+            f"  ※ 아래 단락별 글자 수 예산을 반드시 지키며, 각 단락을 쓸 때마다 누적 글자 수를 확인할 것\n"
+            f"  ※ 마지막 단락은 반드시 완성된 문장으로 자연스럽게 끝낼 것 — 문장 중간에 절대 끊지 말 것"
         )
     elif is_freeform:
         word_count = "전체 900~1200자 (단락 합산 기준. 절대 초과 금지)"
     else:
         word_count = "전체 700~1000자 (단락 합산 기준)"
 
-    # 단락 구조 가이드 — 글자 수 제한이 있으면 각 단락 비율로 조정
+    # 단락 구조 가이드 — 글자 수 제한이 있으면 단락별 정확한 글자 수 예산으로 안내
     if char_limit:
-        structure_guide = f"""글자 수 제한({char_limit})에 맞춰 아래 비율로 3단락 구성:
-단락 1 (전체의 약 20%): 이 문항의 핵심 답변 두괄식 제시
-단락 2 (전체의 약 55%): 핵심 근거 경험을 STAR 구조로 전개
+        if _max_c and _max_c <= 300:
+            _p1 = int(_max_c * 0.35)
+            _p2 = _max_c - _p1
+            structure_guide = f"""【단락별 글자 수 예산 — 합산 {_max_c}자 이내】
+단락 1 (약 {_p1}자): 핵심 답변 두괄식 + 대표 경험 1줄 요약
+단락 2 (약 {_p2}자): 구체적 경험 STAR 압축형 서술 + 직무 연결 마무리
+※ 마지막 문장은 완성된 형태로 자연스럽게 끝낼 것"""
+        else:
+            _p1 = int(_max_c * 0.20) if _max_c else 0
+            _p2 = int(_max_c * 0.55) if _max_c else 0
+            _p3 = (_max_c - _p1 - _p2) if _max_c else 0
+            structure_guide = f"""【단락별 글자 수 예산 — 합산 {_max_c}자 이내】
+단락 1 (약 {_p1}자): 이 문항의 핵심 답변 두괄식 제시
+단락 2 (약 {_p2}자): 핵심 근거 경험을 STAR 구조로 전개
   S(상황): 어떤 상황/과제였는지
   A(행동): 구체적 행동, 수치 포함
   R(결과): 측정 가능한 성과
-단락 3 (전체의 약 25%): 이 직무·회사와의 연결 + 기여 방향
-글자 수 제한이 짧은 경우(300자 이내) 단락 2를 중심으로 간결하게 압축"""
+단락 3 (약 {_p3}자): 이 직무·회사와의 연결 + 기여 방향
+※ 각 단락을 마칠 때마다 누적 글자 수를 확인하고, 단락 3은 반드시 완성된 문장으로 자연스럽게 끝낼 것"""
     elif is_freeform:
         structure_guide = """단락 1 (200~280자): 강한 첫 문장으로 시작. 지원자를 정의하는 핵심 역량·경험 선언 + 구체적 수치나 에피소드로 즉시 뒷받침
 단락 2 (350~450자): 가장 강력한 경험 1개를 STAR 구조로 전개
@@ -371,13 +524,18 @@ async def stream_cover_letter(
     # ── 2단계: 사용자 경험 매칭 ────────────────────────────────────
     yield f"data: {json.dumps({'type': 'stage', 'stage': 2, 'message': '지원자 경험 분석 중...'}, ensure_ascii=False)}\n\n"
 
-    user_resume_ctx, user_portfolio_ctx = get_user_documents_context(user_id)
+    user_resume_ctx_db, user_portfolio_ctx_db = get_user_documents_context(user_id)
+    # 세션에서 파싱한 이력서(profile)가 있으면 DB 이력서 무시 — 최신 데이터 우선
+    has_session_profile = bool(profile.get("experience") or profile.get("skills") or profile.get("projects"))
+    user_resume_ctx = "" if has_session_profile else user_resume_ctx_db
+    # 포트폴리오: 세션 제공분 우선, 없으면 DB 데이터
+    user_portfolio_ctx = profile.get("portfolio_text") or user_portfolio_ctx_db
     experience_match = match_user_to_company(
         company_context, profile,
         user_resume_ctx, user_portfolio_ctx,
         job_posting,
         questions,
-    ) if company_context or user_resume_ctx or user_portfolio_ctx else ""
+    ) if company_context or profile or user_portfolio_ctx else ""
 
     # 자유형식 여부 판단
     is_freeform = not bool(user_questions) and not bool([q for q in job_posting.get("questions", []) if str(q).strip()])
@@ -457,11 +615,11 @@ async def stream_cover_letter(
             )
 
             # 글자 수 제한이 있으면 해당 분량에 맞게 토큰 조정 (한국어 1자 ≈ 1.5토큰)
+            min_chars, max_chars = parse_char_limit(char_limit)
             if char_limit:
-                import re as _re
-                nums = [int(n) for n in _re.findall(r'\d+', char_limit)]
-                target_chars = max(nums) if nums else 1000
-                max_tokens = max(800, int(target_chars * 1.8))
+                target_chars = max_chars or min_chars or 1000
+                # 1.8x: min_chars까지 충분히 쓸 수 있도록 여유 확보
+                max_tokens = max(600, int(target_chars * 1.8))
             else:
                 max_tokens = 1600 if is_freeform else 1700
             answer_buffer = []
@@ -476,29 +634,40 @@ async def stream_cover_letter(
 
             full_answer = "".join(answer_buffer)
 
-            # 글자 수 초과 시 자동 보정
-            if char_limit:
-                import re as _re
-                nums = [int(n) for n in _re.findall(r'\d+', char_limit)]
-                if nums:
-                    max_chars = max(nums)
-                    actual_chars = len(full_answer)
-                    if actual_chars > max_chars:
-                        correction_prompt = (
-                            f"다음 자소서 답변이 {actual_chars}자입니다. 글자 수 제한은 {char_limit}이므로 "
-                            f"반드시 {max_chars}자 이내로 압축해주세요.\n"
-                            f"핵심 경험·근거는 유지하되, 덜 중요한 수식어·반복 표현을 줄이세요.\n"
-                            f"※ 한글·영문·숫자·띄어쓰기 모두 1자씩 계산\n\n"
-                            f"[원본]\n{full_answer}\n\n"
-                            f"{max_chars}자 이내의 압축된 답변만 출력하세요."
-                        )
-                        correction_response = claude.messages.create(
-                            model="claude-sonnet-4-6",
-                            max_tokens=max(600, int(max_chars * 1.8)),
-                            messages=[{"role": "user", "content": correction_prompt}]
-                        )
-                        full_answer = correction_response.content[0].text.strip()
-                        yield f"data: {json.dumps({'type': 'correction', 'index': i, 'content': full_answer}, ensure_ascii=False)}\n\n"
+            # ── 글자 수 보정: 최대 2회 완전 재작성 시도 후 하드컷 보장 ──
+            if char_limit and max_chars is not None:
+                range_str = f"{min_chars}자 이상 {max_chars}자 이하" if min_chars else f"{max_chars}자 이하"
+                for attempt in range(2):
+                    actual = answer_char_count(full_answer)
+                    if actual <= max_chars and (min_chars is None or actual >= min_chars):
+                        break
+                    if actual > max_chars:
+                        issue = f"현재 {actual}자로 최대({max_chars}자)를 초과"
+                    else:
+                        issue = f"현재 {actual}자로 최소({min_chars}자)에 미달"
+                    correction_prompt = (
+                        f"아래 자소서 답변은 {issue}합니다.\n"
+                        f"글자 수 제한 [{range_str}]에 맞게 처음부터 완성도 있게 다시 작성해주세요.\n\n"
+                        f"【작성 규칙】\n"
+                        f"① 글자 수: 한글·영문·숫자·띄어쓰기·줄바꿈 모두 각 1자, 합산 {range_str}\n"
+                        f"② 핵심 경험·수치·근거는 반드시 유지할 것\n"
+                        f"③ 3단락 구조(두괄식 → STAR 경험 → 직무 연결)로 완성도 있게 마무리\n"
+                        f"④ 마지막 문장은 반드시 완성된 문장으로 자연스럽게 끝낼 것\n"
+                        f"⑤ 답변 본문만 출력, 제목·설명·메타 코멘트 없이\n\n"
+                        f"[원본 답변 — 경험·사실은 유지하되 분량을 조정하여 재작성]\n{full_answer}"
+                    )
+                    resp = claude.messages.create(
+                        model="claude-sonnet-4-6",
+                        max_tokens=max(600, int(max_chars * 1.8)),
+                        messages=[{"role": "user", "content": correction_prompt}]
+                    )
+                    full_answer = resp.content[0].text.strip()
+                    yield f"data: {json.dumps({'type': 'correction', 'index': i, 'content': full_answer}, ensure_ascii=False)}\n\n"
+
+                # 하드컷: 재작성 2회 후에도 초과하면 문장 경계에서 잘라냄 (최후 보루)
+                if answer_char_count(full_answer) > max_chars:
+                    full_answer = trim_to_max_chars(full_answer, max_chars, min_chars)
+                    yield f"data: {json.dumps({'type': 'correction', 'index': i, 'content': full_answer}, ensure_ascii=False)}\n\n"
 
             already_written.append({"question": question, "answer": full_answer})
             yield f"data: {json.dumps({'type': 'question_end', 'index': i}, ensure_ascii=False)}\n\n"

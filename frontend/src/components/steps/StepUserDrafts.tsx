@@ -2,7 +2,6 @@
 
 import { useState, useRef, useEffect } from "react";
 import { ChevronLeft, ChevronRight, PenLine, Plus, Trash2, AlignLeft, ListChecks } from "lucide-react";
-import type { JobPosting } from "@/app/generate/page";
 
 export type UserDraft = {
   question: string;
@@ -13,7 +12,7 @@ export type UserDraft = {
 type Mode = "freeform" | "questions";
 
 interface Props {
-  jobPosting: JobPosting;
+  initialQuestions?: string[];
   onBack: () => void;
   onComplete: (drafts: UserDraft[]) => void;
 }
@@ -58,17 +57,19 @@ function AutoResizeTextarea({
   );
 }
 
-export default function StepUserDrafts({ onBack, onComplete }: Props) {
-  const [mode, setMode] = useState<Mode | null>(null);
+export default function StepUserDrafts({ initialQuestions = [], onBack, onComplete }: Props) {
+  const normalizedInitialQuestions = initialQuestions.map((q) => q.trim()).filter(Boolean);
+  const hasInitialQuestions = normalizedInitialQuestions.length > 0;
+  const [mode, setMode] = useState<Mode | null>(hasInitialQuestions ? "questions" : null);
 
   // 자유형식 상태
   const [freeDraft, setFreeDraft] = useState("");
 
   // 질문 작성 상태
-  const [questions, setQuestions] = useState<string[]>([""]);
-  const [drafts, setDrafts] = useState<string[]>([""]);
-  const [charMins, setCharMins] = useState<string[]>([""]);
-  const [charMaxes, setCharMaxes] = useState<string[]>([""]);
+  const [questions, setQuestions] = useState<string[]>(hasInitialQuestions ? normalizedInitialQuestions : [""]);
+  const [drafts, setDrafts] = useState<string[]>(hasInitialQuestions ? normalizedInitialQuestions.map(() => "") : [""]);
+  const [charMins, setCharMins] = useState<string[]>(hasInitialQuestions ? normalizedInitialQuestions.map(() => "") : [""]);
+  const [charMaxes, setCharMaxes] = useState<string[]>(hasInitialQuestions ? normalizedInitialQuestions.map(() => "") : [""]);
 
   const setQuestion = (i: number, val: string) =>
     setQuestions((prev) => prev.map((q, idx) => (idx === i ? val : q)));
